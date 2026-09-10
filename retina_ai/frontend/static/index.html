@@ -1,0 +1,694 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RetinaAI - Rural Diabetic Retinopathy Screening (PS 26038)</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Lucide Icons CDN -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0f7ff',
+              100: '#e0effe',
+              500: '#0284c7',
+              600: '#0369a1',
+              700: '#075985',
+              800: '#0c4a6e',
+              900: '#0a3651',
+            },
+            medical: {
+              success: '#10b981',
+              warning: '#f59e0b',
+              danger: '#ef4444',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    .glass-card {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(8px);
+    }
+    .custom-scrollbar::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    .custom-scrollbar::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans antialiased">
+
+  <!-- Top Emergency / Rural Health Banner -->
+  <header class="bg-brand-900 text-white border-b border-brand-800 sticky top-0 z-50 shadow-md">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        
+        <!-- Logo & Program Title -->
+        <div class="flex items-center space-x-3">
+          <div class="w-10 h-10 rounded-lg bg-sky-500/20 border border-sky-400/40 flex items-center justify-center text-sky-300">
+            <i data-lucide="eye" class="w-6 h-6"></i>
+          </div>
+          <div>
+            <div class="flex items-center space-x-2">
+              <span class="font-bold text-lg tracking-tight text-white">RetinaAI</span>
+              <span class="text-xs px-2 py-0.5 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/30">PS 26038</span>
+            </div>
+            <p class="text-xs text-slate-300">Explainable AI for DR Screening in Rural India &bull; MathWorks</p>
+          </div>
+        </div>
+
+        <!-- Navigation Tabs -->
+        <nav class="hidden md:flex space-x-1" id="nav-tabs">
+          <button onclick="switchTab('screening')" id="tab-btn-screening" class="px-3.5 py-1.5 rounded-md text-sm font-medium transition-all bg-sky-600 text-white flex items-center space-x-1.5">
+            <i data-lucide="activity" class="w-4 h-4"></i>
+            <span>Screening Station</span>
+          </button>
+          <button onclick="switchTab('patients')" id="tab-btn-patients" class="px-3.5 py-1.5 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-brand-800 transition-all flex items-center space-x-1.5">
+            <i data-lucide="users" class="w-4 h-4"></i>
+            <span>Patient Registry</span>
+          </button>
+          <button onclick="switchTab('simulation')" id="tab-btn-simulation" class="px-3.5 py-1.5 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-brand-800 transition-all flex items-center space-x-1.5">
+            <i data-lucide="cpu" class="w-4 h-4"></i>
+            <span>Telemedicine Simulation (100k)</span>
+          </button>
+          <button onclick="switchTab('ml-hub')" id="tab-btn-ml-hub" class="px-3.5 py-1.5 rounded-md text-sm font-medium text-slate-300 hover:text-white hover:bg-brand-800 transition-all flex items-center space-x-1.5">
+            <i data-lucide="git-branch" class="w-4 h-4"></i>
+            <span>ML Model Integration</span>
+          </button>
+        </nav>
+
+        <!-- Connectivity & Camp Status -->
+        <div class="flex items-center space-x-3">
+          <div class="hidden sm:flex items-center space-x-1.5 px-2.5 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-emerald-400 text-xs">
+            <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+            <span>PHC Online (Edge Mode)</span>
+          </div>
+          <button onclick="openNewPatientModal()" class="px-3 py-1.5 rounded-lg bg-sky-500 hover:bg-sky-400 text-white text-xs font-semibold shadow-sm transition-all flex items-center space-x-1">
+            <i data-lucide="user-plus" class="w-4 h-4"></i>
+            <span>+ Patient</span>
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Container -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8">
+
+    <!-- ======================================================== -->
+    <!-- TAB 1: SCREENING STATION & XAI GRAD-CAM VIEWER           -->
+    <!-- ======================================================== -->
+    <div id="tab-screening" class="space-y-6">
+
+      <!-- Patient Selector & Eye Mode Bar -->
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 flex flex-col md:flex-row items-center justify-between gap-4">
+        <div class="flex items-center space-x-4 w-full md:w-auto">
+          <label class="text-xs font-bold uppercase tracking-wider text-slate-500">Active Patient:</label>
+          <select id="active-patient-select" onchange="onPatientSelected()" class="bg-slate-50 border border-slate-300 text-slate-800 text-sm rounded-lg focus:ring-sky-500 focus:border-sky-500 block p-2 font-medium min-w-[260px]">
+            <option value="">-- Select Registered Patient --</option>
+          </select>
+        </div>
+
+        <div class="flex items-center space-x-3 w-full md:w-auto justify-end">
+          <div class="flex items-center bg-slate-100 p-1 rounded-lg border border-slate-200">
+            <span class="text-xs font-semibold text-slate-500 px-2">Eye:</span>
+            <button type="button" onclick="setEyeSelection('OD')" id="btn-eye-od" class="px-3 py-1 text-xs font-bold rounded-md bg-white text-sky-700 shadow-sm border border-slate-200">OD (Right Eye)</button>
+            <button type="button" onclick="setEyeSelection('OS')" id="btn-eye-os" class="px-3 py-1 text-xs font-bold rounded-md text-slate-600 hover:text-slate-900">OS (Left Eye)</button>
+          </div>
+          <button onclick="loadSampleFundusImage()" class="text-xs px-3 py-1.5 rounded-lg border border-sky-300 text-sky-700 bg-sky-50 hover:bg-sky-100 font-medium flex items-center space-x-1">
+            <i data-lucide="sparkles" class="w-3.5 h-3.5"></i>
+            <span>Load Sample IDRiD</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- Main Dual Column Workspace: Upload & Inspection vs XAI Diagnostic Results -->
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Left Column (5 cols): Image Uploader & Viewer Controls -->
+        <div class="lg:col-span-5 space-y-4">
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
+            <div class="flex items-center justify-between">
+              <h3 class="font-bold text-slate-800 flex items-center space-x-2 text-sm">
+                <i data-lucide="camera" class="w-4 h-4 text-sky-600"></i>
+                <span>Retinal Fundus Image Acquisition</span>
+              </h3>
+              <span id="camera-badge" class="text-[11px] font-semibold text-slate-400 bg-slate-100 px-2 py-0.5 rounded">IDRiD / Portable Camera</span>
+            </div>
+
+            <!-- Drag & Drop Upload Dropzone -->
+            <div id="dropzone" onclick="document.getElementById('fundus-file-input').click()" class="border-2 border-dashed border-slate-300 hover:border-sky-500 rounded-xl p-6 text-center cursor-pointer transition-all bg-slate-50/50 hover:bg-sky-50/30 flex flex-col items-center justify-center min-h-[220px] relative overflow-hidden group">
+              <input type="file" id="fundus-file-input" accept="image/*" class="hidden" onchange="handleFileSelect(event)" />
+              
+              <div id="upload-placeholder" class="space-y-2">
+                <div class="w-12 h-12 mx-auto rounded-full bg-sky-100 text-sky-600 flex items-center justify-center group-hover:scale-110 transition-transform">
+                  <i data-lucide="upload-cloud" class="w-6 h-6"></i>
+                </div>
+                <div class="text-xs text-slate-600">
+                  <span class="font-bold text-sky-600">Click to upload fundus photo</span> or drag & drop
+                </div>
+                <p class="text-[11px] text-slate-400">Standard Macula/Optic Disc 45° FOV (JPEG, PNG)</p>
+              </div>
+
+              <img id="fundus-preview" class="hidden max-h-[240px] w-auto object-contain rounded-lg shadow-sm" alt="Fundus Preview" />
+            </div>
+
+            <!-- Preprocessing & Notes -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">ASHA / PHC Health Worker Notes:</label>
+              <textarea id="asha-notes-input" rows="2" placeholder="e.g., Patient reports blurred vision in right eye since 3 months. Fasting blood sugar 185 mg/dL." class="w-full text-xs p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500 bg-slate-50"></textarea>
+            </div>
+
+            <!-- Screen Action Button -->
+            <button id="btn-run-screening" onclick="triggerFundusScreening()" class="w-full py-3 px-4 rounded-xl bg-gradient-to-r from-sky-600 to-brand-700 hover:from-sky-500 hover:to-brand-600 text-white font-bold text-sm shadow-md transition-all flex items-center justify-center space-x-2 disabled:opacity-50">
+              <i data-lucide="microscope" class="w-4 h-4"></i>
+              <span id="btn-screen-text">Run Explainable AI Screening</span>
+            </button>
+          </div>
+
+          <!-- Quick Telemedicine Protocol Card -->
+          <div class="bg-sky-50 border border-sky-200 rounded-xl p-4 text-xs text-sky-900 space-y-1.5">
+            <div class="font-bold flex items-center space-x-1.5 text-sky-800">
+              <i data-lucide="shield-alert" class="w-4 h-4 text-sky-600"></i>
+              <span>ICDR Clinical Screening Protocol (PS 26038)</span>
+            </div>
+            <p class="text-slate-600 leading-relaxed">
+              Automated classification identifies <b>Referable DR</b> (Grade &ge; 2: Moderate/Severe/PDR) with >90% sensitivity to prevent irreversible blindness. Non-referable cases (Grade 0/1) receive routine annual recall.
+            </p>
+          </div>
+        </div>
+
+        <!-- Right Column (7 cols): Multimodal XAI Visualizer & Triage Results -->
+        <div class="lg:col-span-7 space-y-4">
+
+          <!-- Diagnostic Banner (Dynamic) -->
+          <div id="results-placeholder" class="bg-white rounded-xl shadow-sm border border-slate-200 p-12 text-center text-slate-400 space-y-3">
+            <div class="w-16 h-16 mx-auto rounded-full bg-slate-100 flex items-center justify-center text-slate-300">
+              <i data-lucide="scan" class="w-8 h-8"></i>
+            </div>
+            <h4 class="font-semibold text-slate-600 text-base">Awaiting Fundus Examination</h4>
+            <p class="text-xs text-slate-400 max-w-md mx-auto">
+              Select a registered patient and upload a fundus photograph or click "Load Sample IDRiD" to run the pipeline.
+            </p>
+          </div>
+
+          <!-- Result Container (Hidden until screened) -->
+          <div id="results-panel" class="hidden space-y-4">
+            
+            <!-- Triage Status Badge -->
+            <div id="triage-badge-container" class="rounded-xl p-4 border flex items-center justify-between transition-all">
+              <div class="flex items-center space-x-3">
+                <div id="triage-icon-box" class="w-12 h-12 rounded-xl flex items-center justify-center text-white">
+                  <i id="triage-icon" data-lucide="check-circle" class="w-6 h-6"></i>
+                </div>
+                <div>
+                  <div class="flex items-center space-x-2">
+                    <span id="res-triage-status" class="font-black text-sm tracking-wide uppercase"></span>
+                    <span id="res-urgency-pill" class="text-[10px] font-bold px-2 py-0.5 rounded-full"></span>
+                  </div>
+                  <h2 id="res-grade-title" class="text-lg font-extrabold text-slate-800"></h2>
+                </div>
+              </div>
+
+              <!-- Confidence Meter -->
+              <div class="text-right">
+                <span class="text-[11px] text-slate-500 font-semibold block">Confidence</span>
+                <span id="res-confidence-val" class="text-xl font-black text-slate-800"></span>
+              </div>
+            </div>
+
+            <!-- Interactive Multimodal Viewer (Raw vs Preprocessed vs Grad-CAM) -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 space-y-3">
+              <div class="flex items-center justify-between border-b border-slate-100 pb-2.5">
+                <div class="flex items-center space-x-2">
+                  <span class="font-bold text-xs text-slate-700">Multimodal View Mode:</span>
+                  <div class="inline-flex rounded-md shadow-sm" role="group">
+                    <button type="button" onclick="setViewerMode('gradcam')" id="mode-btn-gradcam" class="px-2.5 py-1 text-xs font-semibold rounded-l-lg bg-sky-600 text-white">Grad-CAM Overlay</button>
+                    <button type="button" onclick="setViewerMode('side')" id="mode-btn-side" class="px-2.5 py-1 text-xs font-semibold bg-white text-slate-700 hover:bg-slate-50 border-t border-b border-slate-200">Side-by-Side</button>
+                    <button type="button" onclick="setViewerMode('clahe')" id="mode-btn-clahe" class="px-2.5 py-1 text-xs font-semibold rounded-r-lg bg-white text-slate-700 hover:bg-slate-50 border border-slate-200">Green CLAHE</button>
+                  </div>
+                </div>
+
+                <!-- Opacity Slider -->
+                <div class="flex items-center space-x-2" id="opacity-control-group">
+                  <span class="text-[11px] font-semibold text-slate-500">Heatmap Alpha:</span>
+                  <input type="range" min="0" max="100" value="50" id="gradcam-opacity-slider" oninput="adjustHeatmapAlpha(this.value)" class="w-20 h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-600" />
+                  <span id="opacity-label" class="text-[11px] font-bold text-slate-600">50%</span>
+                </div>
+              </div>
+
+              <!-- Main Interactive Image Canvas / Viewer -->
+              <div class="relative rounded-lg overflow-hidden bg-black flex items-center justify-center min-h-[300px]" id="viewer-stage">
+                <!-- Single Overlay Mode Canvas -->
+                <div id="overlay-view-wrapper" class="relative w-full max-w-[420px] aspect-square mx-auto">
+                  <img id="img-display-base" class="absolute inset-0 w-full h-full object-contain" alt="Base Fundus" />
+                  <img id="img-display-overlay" class="absolute inset-0 w-full h-full object-contain mix-blend-screen opacity-50 transition-opacity" alt="GradCAM Heatmap" />
+                </div>
+
+                <!-- Side by Side Mode Container -->
+                <div id="side-by-side-wrapper" class="hidden grid-cols-2 gap-2 w-full p-2">
+                  <div class="text-center space-y-1">
+                    <img id="img-side-raw" class="w-full aspect-square object-contain bg-slate-900 rounded" alt="Raw" />
+                    <span class="text-[10px] text-slate-300 font-semibold">1. Raw Fundus</span>
+                  </div>
+                  <div class="text-center space-y-1">
+                    <img id="img-side-grad" class="w-full aspect-square object-contain bg-slate-900 rounded" alt="GradCAM" />
+                    <span class="text-[10px] text-amber-300 font-semibold">2. Grad-CAM Salience</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- Sub-Pixel Microvascular Lesion Counter -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 space-y-2.5">
+              <div class="flex items-center justify-between">
+                <h4 class="font-bold text-xs text-slate-800 uppercase tracking-wider flex items-center space-x-1.5">
+                  <i data-lucide="crosshair" class="w-3.5 h-3.5 text-sky-600"></i>
+                  <span>Sub-Pixel Lesion Detection Summary</span>
+                </h4>
+                <span class="text-[10px] bg-slate-100 text-slate-500 font-medium px-2 py-0.5 rounded">Sub-pixel Resolution</span>
+              </div>
+              <div class="grid grid-cols-2 sm:grid-cols-4 gap-2 text-center">
+                <div class="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <span class="text-[10px] text-slate-500 block">Microaneurysms</span>
+                  <span id="res-count-ma" class="text-base font-extrabold text-slate-800">0</span>
+                </div>
+                <div class="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <span class="text-[10px] text-slate-500 block">Hemorrhages</span>
+                  <span id="res-count-hem" class="text-base font-extrabold text-slate-800">0</span>
+                </div>
+                <div class="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <span class="text-[10px] text-slate-500 block">Hard Exudates</span>
+                  <span id="res-count-ex" class="text-base font-extrabold text-slate-800">0</span>
+                </div>
+                <div class="p-2 bg-slate-50 rounded-lg border border-slate-100">
+                  <span class="text-[10px] text-slate-500 block">Neovascularization</span>
+                  <span id="res-count-nv" class="text-xs font-extrabold text-slate-800">Absent</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Clinical Explanation & ASHA Directive -->
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 space-y-3">
+              <div>
+                <h4 class="text-xs font-bold text-slate-800 flex items-center space-x-1.5">
+                  <i data-lucide="file-text" class="w-3.5 h-3.5 text-sky-600"></i>
+                  <span>Explainable AI (XAI) Saliency Rationale</span>
+                </h4>
+                <p id="res-xai-summary" class="text-xs text-slate-600 mt-1 leading-relaxed"></p>
+              </div>
+
+              <div class="bg-amber-50/70 border border-amber-200/80 rounded-lg p-3">
+                <h5 class="text-xs font-bold text-amber-900 flex items-center space-x-1">
+                  <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-600"></i>
+                  <span>ASHA Worker / PHC Action Directive:</span>
+                </h5>
+                <p id="res-asha-guidance" class="text-xs text-amber-800 mt-0.5 font-medium"></p>
+              </div>
+
+              <!-- Referral Hospital Routing (if referable) -->
+              <div id="referral-hospital-box" class="hidden bg-red-50 border border-red-200 rounded-lg p-3 text-xs text-red-900 flex items-start justify-between">
+                <div>
+                  <span class="font-bold block">Assigned Tertiary Eye Hospital:</span>
+                  <span id="res-hosp-name" class="font-semibold text-slate-800"></span>
+                  <span id="res-hosp-dist" class="text-slate-500 text-[11px] block"></span>
+                </div>
+                <div class="text-right">
+                  <span class="text-[11px] text-red-700 font-bold block">Emergency Window:</span>
+                  <span id="res-recall-period" class="font-black text-red-600"></span>
+                </div>
+              </div>
+
+              <!-- Download Clinical Report Button -->
+              <div class="pt-1 flex items-center justify-between">
+                <span class="text-[11px] text-slate-400">Model: <span id="res-model-source" class="font-mono text-slate-600"></span></span>
+                <a id="res-btn-pdf" href="#" target="_blank" class="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-sm transition-all flex items-center space-x-1.5">
+                  <i data-lucide="download" class="w-4 h-4"></i>
+                  <span>Download Referral PDF</span>
+                </a>
+              </div>
+            </div>
+
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+
+    <!-- ======================================================== -->
+    <!-- TAB 2: PATIENT REGISTRY & SCREENING HISTORY              -->
+    <!-- ======================================================== -->
+    <div id="tab-patients" class="hidden space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
+        
+        <div class="flex flex-col sm:flex-row items-center justify-between gap-4">
+          <div>
+            <h3 class="font-bold text-slate-800 text-base">Rural Patient Directory</h3>
+            <p class="text-xs text-slate-500">Track screened patients, triage status, and ophthalmology follow-ups</p>
+          </div>
+          
+          <div class="flex items-center space-x-2 w-full sm:w-auto">
+            <div class="relative w-full sm:w-64">
+              <i data-lucide="search" class="w-4 h-4 absolute left-3 top-2.5 text-slate-400"></i>
+              <input type="text" id="patient-search-input" onkeyup="filterPatientsTable()" placeholder="Search Name, Village, UID..." class="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+            </div>
+            <button onclick="openNewPatientModal()" class="px-3 py-1.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white text-xs font-semibold whitespace-nowrap">
+              + New Patient
+            </button>
+          </div>
+        </div>
+
+        <!-- Patients Table -->
+        <div class="overflow-x-auto custom-scrollbar">
+          <table class="w-full text-left text-xs text-slate-600">
+            <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider font-bold border-y border-slate-200">
+              <tr>
+                <th class="py-3 px-4">Patient UID</th>
+                <th class="py-3 px-4">Name</th>
+                <th class="py-3 px-4">Age / Gender</th>
+                <th class="py-3 px-4">Village / District</th>
+                <th class="py-3 px-4">Diabetes Yrs</th>
+                <th class="py-3 px-4">HbA1c</th>
+                <th class="py-3 px-4">Triage Status</th>
+                <th class="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="patients-table-body" class="divide-y divide-slate-100">
+              <!-- Dynamically populated -->
+            </tbody>
+          </table>
+        </div>
+
+      </div>
+    </div>
+
+
+    <!-- ======================================================== -->
+    <!-- TAB 3: TELEMEDICINE & SIMULINK RESOURCE SIMULATOR (100k) -->
+    <!-- ======================================================== -->
+    <div id="tab-simulation" class="hidden space-y-6">
+
+      <!-- Problem Statement 26038 Simulink Highlight Banner -->
+      <div class="bg-gradient-to-r from-brand-900 to-sky-900 rounded-xl p-6 text-white shadow-sm space-y-2">
+        <div class="flex items-center space-x-2">
+          <span class="px-2.5 py-0.5 rounded-full bg-sky-400/20 text-sky-300 border border-sky-400/30 text-xs font-bold uppercase tracking-wider">MathWorks PS 26038 Requirement</span>
+          <span class="text-xs text-slate-300">&bull; Simulink Screening Pipeline Optimization</span>
+        </div>
+        <h2 class="text-xl font-black">District-Level Telemedicine Screening Pipeline Simulator</h2>
+        <p class="text-xs text-slate-300 max-w-3xl leading-relaxed">
+          Simulates image acquisition rates, 2G/3G bandwidth constraints, Edge AI processing throughput, and specialist review capacity to optimize resource allocation for district programs screening <b>100,000+ patients annually</b>.
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+        <!-- Simulation Control Inputs (5 cols) -->
+        <div class="lg:col-span-5 bg-white rounded-xl shadow-sm border border-slate-200 p-5 space-y-4">
+          <h3 class="font-bold text-sm text-slate-800 flex items-center space-x-1.5 border-b border-slate-100 pb-2">
+            <i data-lucide="sliders" class="w-4 h-4 text-sky-600"></i>
+            <span>Simulation Parameters</span>
+          </h3>
+
+          <!-- Annual Population -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-xs">
+              <label class="font-semibold text-slate-700">Annual Target Cohort:</label>
+              <span id="val-pop" class="font-bold text-sky-700">100,000 patients</span>
+            </div>
+            <input type="range" id="sim-pop-slider" min="10000" max="300000" step="10000" value="100000" oninput="updateSimSlider('pop', this.value)" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-600" />
+            <span class="text-[10px] text-slate-400">Standard rural district cohort size</span>
+          </div>
+
+          <!-- Number of PHCs -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-xs">
+              <label class="font-semibold text-slate-700">Primary Health Centres (PHCs):</label>
+              <span id="val-phc" class="font-bold text-sky-700">50 centres</span>
+            </div>
+            <input type="range" id="sim-phc-slider" min="10" max="150" step="5" value="50" oninput="updateSimSlider('phc', this.value)" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-600" />
+            <span class="text-[10px] text-slate-400">Distributed across rural blocks</span>
+          </div>
+
+          <!-- Cellular Bandwidth -->
+          <div class="space-y-1">
+            <label class="block text-xs font-semibold text-slate-700">Rural Cellular Bandwidth:</label>
+            <select id="sim-bandwidth-select" onchange="runSimulation()" class="w-full text-xs p-2.5 rounded-lg border border-slate-300 bg-slate-50 font-medium">
+              <option value="0.5">2G / GPRS (0.5 Mbps) - Extreme rural latency</option>
+              <option value="2.0" selected>3G Cellular (2.0 Mbps) - Standard rural PHC</option>
+              <option value="8.0">4G LTE (8.0 Mbps) - Block CHC</option>
+              <option value="40.0">Fibre / Broadband (40.0 Mbps) - District Hospital</option>
+            </select>
+          </div>
+
+          <!-- Allocated District Ophthalmologists -->
+          <div class="space-y-1">
+            <div class="flex justify-between text-xs">
+              <label class="font-semibold text-slate-700">Assigned District Ophthalmologists:</label>
+              <span id="val-doc" class="font-bold text-sky-700">5 doctors</span>
+            </div>
+            <input type="range" id="sim-doc-slider" min="1" max="15" step="1" value="5" oninput="updateSimSlider('doc', this.value)" class="w-full h-1.5 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-sky-600" />
+            <span class="text-[10px] text-slate-400">Specialists available for telemedicine triage queue</span>
+          </div>
+
+          <button onclick="runSimulation()" class="w-full py-2.5 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold text-xs shadow-sm transition-all flex items-center justify-center space-x-1.5">
+            <i data-lucide="play" class="w-3.5 h-3.5"></i>
+            <span>Re-compute Simulink Model</span>
+          </button>
+        </div>
+
+        <!-- Simulation Results Dashboard (7 cols) -->
+        <div class="lg:col-span-7 space-y-4">
+          
+          <!-- Key Metrics Grid -->
+          <div class="grid grid-cols-2 sm:grid-cols-4 gap-3">
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3 text-center">
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Daily Screening</span>
+              <span id="sim-res-daily" class="text-lg font-black text-slate-800">400</span>
+              <span class="text-[10px] text-slate-500 block">patients / day</span>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3 text-center">
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Uplink Latency</span>
+              <span id="sim-res-latency" class="text-lg font-black text-sky-700">4.8s</span>
+              <span class="text-[10px] text-slate-500 block">per fundus pair</span>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3 text-center">
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Specialist Filter</span>
+              <span id="sim-res-reduction" class="text-lg font-black text-emerald-600">85.0%</span>
+              <span class="text-[10px] text-emerald-700 block">workload cut</span>
+            </div>
+            <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-3 text-center">
+              <span class="text-[10px] font-semibold text-slate-400 uppercase tracking-wider block">Doctors Needed</span>
+              <span id="sim-res-needed" class="text-lg font-black text-brand-700">1</span>
+              <span class="text-[10px] text-slate-500 block">ophthalmologist</span>
+            </div>
+          </div>
+
+          <!-- Queue Stability Callout -->
+          <div id="sim-queue-box" class="rounded-xl p-4 border transition-all text-xs font-medium space-y-1">
+            <div class="flex items-center space-x-2 font-bold text-sm" id="sim-queue-title">
+              <i data-lucide="check-circle-2" class="w-4 h-4"></i>
+              <span>Queue Status</span>
+            </div>
+            <p id="sim-queue-desc" class="text-slate-600 leading-relaxed"></p>
+          </div>
+
+          <!-- Chart: Manual Screening vs AI-Assisted Telemedicine -->
+          <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-4 space-y-2">
+            <div class="flex items-center justify-between">
+              <h4 class="font-bold text-xs text-slate-800 flex items-center space-x-1.5">
+                <i data-lucide="bar-chart-2" class="w-3.5 h-3.5 text-sky-600"></i>
+                <span>Doctor Workload Comparison (Cases Screened / Day)</span>
+              </h4>
+              <span class="text-[10px] text-slate-400">85% Non-Referable Triage Filter</span>
+            </div>
+            <div class="h-48">
+              <canvas id="simChart"></canvas>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </div>
+
+
+    <!-- ======================================================== -->
+    <!-- TAB 4: ML MODEL INTEGRATION HUB                          -->
+    <!-- ======================================================== -->
+    <div id="tab-ml-hub" class="hidden space-y-6">
+      <div class="bg-white rounded-xl shadow-sm border border-slate-200 p-6 space-y-6">
+        
+        <div>
+          <span class="px-2.5 py-0.5 rounded-full bg-purple-100 text-purple-800 text-[11px] font-bold uppercase tracking-wider">Teammate Integration Contract</span>
+          <h2 class="text-lg font-black text-slate-800 mt-2">Machine Learning Architecture & Pluggable Adapter</h2>
+          <p class="text-xs text-slate-500 leading-relaxed">
+            The RetinaAI backend is built with a decoupled adapter pattern. Your ML teammate can train models in MATLAB or PyTorch, export them, and place them in <code class="bg-slate-100 px-1 py-0.5 rounded text-slate-800 font-mono text-xs">models/exported/dr_model.onnx</code>. The system automatically switches to their neural network with zero frontend or backend edits!
+          </p>
+        </div>
+
+        <!-- 3-Tier Model Pipeline Architecture -->
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div class="p-4 rounded-xl border border-sky-200 bg-sky-50/50 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="font-black text-sky-800 text-sm">QNet</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-sky-200 text-sky-800">Quantized</span>
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed">
+              Ultra-lightweight INT8 edge model designed for instant on-device binary triage (Referable vs Non-referable) at low-power rural PHCs without GPU.
+            </p>
+          </div>
+
+          <div class="p-4 rounded-xl border border-purple-200 bg-purple-50/50 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="font-black text-purple-800 text-sm">LNet</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-200 text-purple-800">Localization</span>
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed">
+              Sub-pixel lesion segmentation network targeting IDRiD annotations for microaneurysms, hemorrhages, and hard exudates.
+            </p>
+          </div>
+
+          <div class="p-4 rounded-xl border border-emerald-200 bg-emerald-50/50 space-y-2">
+            <div class="flex items-center justify-between">
+              <span class="font-black text-emerald-800 text-sm">GNet</span>
+              <span class="text-[10px] font-bold px-2 py-0.5 rounded bg-emerald-200 text-emerald-800">5-Class ICDR</span>
+            </div>
+            <p class="text-xs text-slate-600 leading-relaxed">
+              Full 5-class clinical grading network (Grades 0 to 4) with Grad-CAM gradient backpropagation for visual explainability.
+            </p>
+          </div>
+        </div>
+
+        <!-- Tensor Contract Specs -->
+        <div class="bg-slate-900 text-slate-100 rounded-xl p-5 font-mono text-xs space-y-3">
+          <div class="flex items-center justify-between text-slate-400 border-b border-slate-800 pb-2">
+            <span class="font-bold text-sky-400">ML Export Contract Specifications</span>
+            <span>Input Shape: [1, 3, 512, 512]</span>
+          </div>
+          <p class="text-slate-300">
+            # 1. Place exported weights here:<br/>
+            <span class="text-emerald-400">retina_ai/models/exported/dr_model.onnx</span> (or dr_model.pt)
+          </p>
+          <p class="text-slate-300">
+            # 2. Expected Output Tensor Shape: <span class="text-amber-400">[1, 5]</span> logits<br/>
+            Index 0: Grade 0 (No DR)<br/>
+            Index 1: Grade 1 (Mild NPDR)<br/>
+            Index 2: Grade 2 (Moderate NPDR - Referable)<br/>
+            Index 3: Grade 3 (Severe NPDR - Referable)<br/>
+            Index 4: Grade 4 (Proliferative DR - Referable)
+          </p>
+        </div>
+
+      </div>
+    </div>
+
+  </main>
+
+  <!-- New Patient Modal -->
+  <div id="patient-modal" class="hidden fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-white rounded-2xl max-w-lg w-full p-6 shadow-2xl space-y-4 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+      
+      <div class="flex items-center justify-between border-b border-slate-100 pb-3">
+        <h3 class="font-bold text-base text-slate-800 flex items-center space-x-2">
+          <i data-lucide="user-plus" class="w-5 h-5 text-sky-600"></i>
+          <span>Register Rural Screening Patient</span>
+        </h3>
+        <button onclick="closeNewPatientModal()" class="text-slate-400 hover:text-slate-600">
+          <i data-lucide="x" class="w-5 h-5"></i>
+        </button>
+      </div>
+
+      <form id="new-patient-form" onsubmit="handleCreatePatient(event)" class="space-y-3 text-xs">
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Full Name *</label>
+          <input type="text" id="inp-name" required placeholder="e.g. Ramesh Kumar" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Age (Years) *</label>
+            <input type="number" id="inp-age" required min="1" max="110" placeholder="56" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Gender *</label>
+            <select id="inp-gender" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500">
+              <option value="Male">Male</option>
+              <option value="Female">Female</option>
+              <option value="Other">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Village / Town *</label>
+            <input type="text" id="inp-village" required placeholder="e.g. Alanganallur" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">District *</label>
+            <input type="text" id="inp-district" required placeholder="e.g. Madurai" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-3">
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">Diabetes Duration (Years)</label>
+            <input type="number" step="0.5" id="inp-diabetes-yrs" placeholder="8.5" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+          </div>
+          <div>
+            <label class="block font-semibold text-slate-700 mb-1">HbA1c (%)</label>
+            <input type="number" step="0.1" id="inp-hba1c" placeholder="8.4" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+          </div>
+        </div>
+
+        <div>
+          <label class="block font-semibold text-slate-700 mb-1">Contact Phone</label>
+          <input type="tel" id="inp-phone" placeholder="+91 98765 43210" class="w-full p-2.5 rounded-lg border border-slate-300 focus:ring-sky-500 focus:border-sky-500" />
+        </div>
+
+        <div class="pt-3 flex items-center justify-end space-x-2 border-t border-slate-100">
+          <button type="button" onclick="closeNewPatientModal()" class="px-4 py-2 rounded-lg border border-slate-300 text-slate-600 hover:bg-slate-50 font-semibold">Cancel</button>
+          <button type="submit" class="px-5 py-2 rounded-lg bg-sky-600 hover:bg-sky-500 text-white font-bold shadow-sm">Save & Select Patient</button>
+        </div>
+      </form>
+
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <footer class="bg-white border-t border-slate-200 py-4 text-center text-xs text-slate-500">
+    <div class="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
+      <span>RetinaAI &bull; Smart India Hackathon / SHS 2026 &bull; Problem Statement ID: 26038 (MathWorks)</span>
+      <span class="text-slate-400">Explainable AI &bull; Grad-CAM &bull; Telemedicine Simulink Workflow Simulation</span>
+    </div>
+  </footer>
+
+  <!-- Application Logic JS -->
+  <script src="/static/app.js"></script>
+  <script>
+    lucide.createIcons();
+  </script>
+</body>
+</html>
