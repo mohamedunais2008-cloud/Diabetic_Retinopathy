@@ -87,7 +87,27 @@ class ScreeningRecord(Base):
     # XAI explanation and clinical notes
     xai_summary = Column(Text, nullable=True)
     asha_worker_notes = Column(Text, nullable=True)
-    doctor_review_status = Column(String(50), default="Pending Specialist Review") # Pending, Reviewed, Actioned
+    doctor_review_status = Column(String(50), default="Pending Specialist Review") # Pending Specialist Review, Reviewed & Certified
+
+    # 4-Stakeholder Telemedicine Extensions
+    nurse_gps_lat = Column(Float, nullable=True)
+    nurse_gps_lon = Column(Float, nullable=True)
+    nurse_camp_name = Column(String(150), default="Mobile Screening Camp")
+    image_quality_status = Column(String(50), default="Good") # Good, Fair, Blurry / Sub-optimal
+    image_quality_score = Column(Float, default=95.0)
+    
+    # Doctor Consultation & Digital Prescription
+    doctor_clinical_action = Column(String(100), nullable=True) # e.g. Laser Photocoagulation Required
+    doctor_prescription = Column(Text, nullable=True)
+    doctor_signed_by = Column(String(120), nullable=True)
+    doctor_signed_at = Column(DateTime, nullable=True)
+    is_dispatched_to_doctor = Column(Boolean, default=True)
+    
+    # Patient & Follow-up Compliance
+    whatsapp_status = Column(String(100), nullable=True)
+    progression_risk_percent = Column(Float, default=15.0)
+    hospital_compliance_status = Column(String(50), default="Pending Arrival") # Pending Arrival, Checked In, Laser Completed
+    
     created_at = Column(DateTime, default=datetime.utcnow)
 
     patient = relationship("Patient", back_populates="screenings")

@@ -33,6 +33,34 @@ def setup_database():
     else:
         print(f"[Database] Existing patients count: {count}")
 
+    # Safe column migrations for ScreeningRecord
+    cols_to_add = [
+        ("nurse_gps_lat", "REAL"),
+        ("nurse_gps_lon", "REAL"),
+        ("nurse_camp_name", "VARCHAR(150) DEFAULT 'Mobile Screening Camp'"),
+        ("image_quality_status", "VARCHAR(50) DEFAULT 'Good'"),
+        ("image_quality_score", "REAL DEFAULT 95.0"),
+        ("doctor_clinical_action", "VARCHAR(100)"),
+        ("doctor_prescription", "TEXT"),
+        ("doctor_signed_by", "VARCHAR(120)"),
+        ("doctor_signed_at", "TIMESTAMP"),
+        ("is_dispatched_to_doctor", "BOOLEAN DEFAULT 1"),
+        ("whatsapp_status", "VARCHAR(100)"),
+        ("progression_risk_percent", "REAL DEFAULT 15.0"),
+        ("hospital_compliance_status", "VARCHAR(50) DEFAULT 'Pending Arrival'")
+    ]
+
+    cursor.execute("PRAGMA table_info(screening_records)")
+    existing_cols = [row[1] for row in cursor.fetchall()]
+
+    for col_name, col_type in cols_to_add:
+        if col_name not in existing_cols:
+            try:
+                cursor.execute(f"ALTER TABLE screening_records ADD COLUMN {col_name} {col_type}")
+                print(f"[Database Migration] Added column: {col_name}")
+            except Exception as e:
+                print(f"[Database Migration Notice] {col_name}: {e}")
+
     conn.commit()
     conn.close()
 

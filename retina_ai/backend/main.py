@@ -14,6 +14,9 @@ from fastapi.responses import FileResponse
 from .database.connection import init_db
 from .routes.patient import router as patient_router
 from .routes.prediction import router as prediction_router
+from .routes.doctor import router as doctor_router
+from .routes.admin import router as admin_router
+from .routes.notification import router as notification_router
 from .routes.report import router as report_router
 from .routes.simulation import router as simulation_router
 
@@ -38,7 +41,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="RetinaAI - Explainable AI for Diabetic Retinopathy Screening",
     description="Telemedicine screening & triage system for rural Primary Health Centres (PHCs). Problem Statement 26038 (MathWorks).",
-    version="1.0.0",
+    version="2.0.0",
     lifespan=lifespan
 )
 
@@ -57,9 +60,12 @@ app.mount("/reports", StaticFiles(directory=REPORTS_DIR), name="reports")
 if os.path.exists(FRONTEND_STATIC_DIR):
     app.mount("/static", StaticFiles(directory=FRONTEND_STATIC_DIR), name="static")
 
-# Register API Routers
+# Register API Routers for 4 Stakeholders
 app.include_router(patient_router)
 app.include_router(prediction_router)
+app.include_router(doctor_router)
+app.include_router(admin_router)
+app.include_router(notification_router)
 app.include_router(report_router)
 app.include_router(simulation_router)
 
@@ -71,7 +77,8 @@ def health_check():
         "service": "RetinaAI Rural DR Screening Backend",
         "problem_statement": "26038",
         "supported_grades": ["0: No DR", "1: Mild", "2: Moderate", "3: Severe", "4: Proliferative DR"],
-        "xai_engine": "Grad-CAM Saliency Maps"
+        "xai_engine": "Grad-CAM Saliency Maps",
+        "roles": ["nurse", "doctor", "patient", "admin"]
     }
 
 
