@@ -253,17 +253,38 @@ async function handleWorkerRegister(e) {
   }
 }
 
-// Handle Patient Secure Lookup (ID or Mobile No)
-async function handlePatientLookup(e) {
+// Patient Auth Mode Switcher (Sign In vs Register)
+function setPatientAuthMode(mode) {
+  const signinForm = document.getElementById("form-patient-signin");
+  const regForm = document.getElementById("form-patient-register");
+  const btnSign = document.getElementById("btn-patient-mode-signin");
+  const btnReg = document.getElementById("btn-patient-mode-register");
+
+  if (mode === "signin") {
+    signinForm.classList.remove("hidden");
+    regForm.classList.add("hidden");
+    btnSign.className = "px-3 py-1 rounded-md bg-white text-emerald-700 shadow-sm font-bold";
+    btnReg.className = "px-3 py-1 rounded-md text-slate-600 hover:text-slate-900 font-bold";
+  } else {
+    signinForm.classList.add("hidden");
+    regForm.classList.remove("hidden");
+    btnReg.className = "px-3 py-1 rounded-md bg-white text-emerald-700 shadow-sm font-bold";
+    btnSign.className = "px-3 py-1 rounded-md text-slate-600 hover:text-slate-900 font-bold";
+  }
+}
+
+// Handle Patient Sign In (Password-Free: Phone Number or Patient UID)
+async function handlePatientSignIn(e) {
   e.preventDefault();
-  const identifier = document.getElementById("inp-patient-identifier").value.trim();
+  const identifier = document.getElementById("inp-patient-login-id").value.trim();
+
   if (!identifier) {
-    alert("Please enter your Patient UID or registered phone number.");
+    alert("Please enter your registered Phone Number or Patient ID (e.g. PAT-2026-0001).");
     return;
   }
 
   try {
-    const res = await fetch("/api/patients/lookup", {
+    const res = await fetch("/api/auth/patient-login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ identifier })
@@ -271,19 +292,68 @@ async function handlePatientLookup(e) {
 
     if (!res.ok) {
       const err = await res.json();
-      throw new Error(err.detail || "Patient record not found.");
+      throw new Error(err.detail || "Patient account not found.");
     }
 
     const data = await res.json();
     currentPatient = data.patient;
-    currentPatientScreenings = data.screenings || [];
+    currentUser = null;
 
     localStorage.setItem("retina_patient", JSON.stringify(currentPatient));
     localStorage.removeItem("retina_user");
 
     enterPortal("patient");
   } catch (err) {
-    alert("Patient Access Notice: " + err.message);
+    alert("Patient Sign In Notice: " + err.message);
+  }
+}
+
+// Handle Patient Self-Registration (No password required)
+async function handlePatientRegister(e) {
+  e.preventDefault();
+  const full_name = document.getElementById("inp-patreg-name").value.trim();
+  const phone = document.getElementById("inp-patreg-phone").value.trim();
+  const village = document.getElementById("inp-patreg-village").value.trim();
+  const emailInput = document.getElementById("inp-patreg-email");
+  const email = emailInput ? emailInput.value.trim() : "";
+  const age = parseInt(document.getElementById("inp-patreg-age")?.value) || 45;
+  const gender = document.getElementById("inp-patreg-gender")?.value || "Male";
+
+  if (!full_name || !phone || !village) {
+    alert("Please enter your Name, Phone Number, and Village.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/auth/patient-register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        full_name,
+        phone,
+        village,
+        email: email || undefined,
+        age,
+        gender
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Registration failed.");
+    }
+
+    const data = await res.json();
+    currentPatient = data.patient;
+    currentUser = null;
+
+    localStorage.setItem("retina_patient", JSON.stringify(currentPatient));
+    localStorage.removeItem("retina_user");
+
+    alert(`✓ Welcome, ${currentPatient.full_name}!\nYour account was created successfully.\nYour Official Patient ID is: ${currentPatient.patient_uid}\n(You can log in anytime with your Phone Number or Patient ID)`);
+    enterPortal("patient");
+  } catch (err) {
+    alert("Patient Registration Notice: " + err.message);
   }
 }
 
@@ -306,8 +376,9 @@ function performDemoLogin() {
 }
 
 function performDemoPatientLogin() {
-  document.getElementById("inp-patient-identifier").value = "PAT-2026-0001";
-  handlePatientLookup(new Event("submit"));
+  setPatientAuthMode("signin");
+  document.getElementById("inp-patient-login-id").value = "PAT-2026-0001";
+  document.getElementById("form-patient-signin").dispatchEvent(new Event("submit"));
 }
 
 function handleSignOut() {
@@ -340,7 +411,7 @@ function enterPortal(role) {
     roleTag.textContent = "Citizen / Patient";
     roleTag.className = "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30";
     document.getElementById("portal-patient").classList.remove("hidden");
-    renderPatientPortalData();
+    loadPatientScreenings(currentPatient.id);
   } else if (currentUser) {
     nameEl.textContent = currentUser.full_name;
     roleTag.textContent = currentUser.role.toUpperCase();
@@ -373,8 +444,10 @@ function enterPortal(role) {
 function autoTrackNurseGPS() {
   const coordsEl = document.getElementById("nurse-gps-coords-display");
   const addrEl = document.getElementById("nurse-gps-address-display");
+  const activeLocTag = document.getElementById("nurse-active-loc-tag");
 
   if (coordsEl) coordsEl.textContent = "📍 Acquiring high-precision live GPS satellite lock...";
+  if (activeLocTag) activeLocTag.textContent = "📍 Acquiring high-precision live satellite coordinates...";
 
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
@@ -393,12 +466,14 @@ function autoTrackNurseGPS() {
           const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${nurseCampGPS.lat}&lon=${nurseCampGPS.lon}`);
           if (res.ok) {
             const data = await res.json();
-            const addr = data.display_name || "Madurai District, Tamil Nadu";
+            const addr = data.display_name || `${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E`;
             nurseCampGPS.address = addr;
             if (addrEl) addrEl.textContent = `Address: ${addr}`;
+            if (activeLocTag) activeLocTag.textContent = `📍 ${addr} (${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E)`;
           }
         } catch (e) {
           if (addrEl) addrEl.textContent = "Address: PHC Outreach Camp Locality, Tamil Nadu";
+          if (activeLocTag) activeLocTag.textContent = `📍 PHC Outreach Camp (${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E)`;
         }
       },
       (err) => {
@@ -408,6 +483,9 @@ function autoTrackNurseGPS() {
         }
         if (addrEl) {
           addrEl.textContent = `Address: ${nurseCampGPS.address}`;
+        }
+        if (activeLocTag) {
+          activeLocTag.textContent = `📍 ${nurseCampGPS.address} (${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E)`;
         }
       },
       { enableHighAccuracy: true, timeout: 8000 }
@@ -440,7 +518,8 @@ async function loadNurseCampHistory() {
   try {
     const res = await fetch("/api/doctor/camp-screenings");
     const data = await res.json();
-    const list = data.queue || [];
+    // Correctly handle array or object response
+    const list = Array.isArray(data) ? data : (data.queue || []);
 
     const badge = document.getElementById("nurse-history-badge");
     if (badge) badge.textContent = list.length;
@@ -460,7 +539,7 @@ async function loadNurseCampHistory() {
       tr.className = "hover:bg-slate-50 transition-colors";
 
       const doctorNotes = isCertified
-        ? `<span class="font-bold text-indigo-950">${s.doctor_clinical_action || 'Action Recorded'}</span><br/><span class="text-slate-500 italic">${s.doctor_prescription || ''}</span>`
+        ? `<span class="font-bold text-indigo-950">${s.doctor_clinical_action || 'Action Recorded'}</span><br/><span class="text-slate-600 font-medium text-[11px]">${s.doctor_prescription || ''}</span>`
         : `<span class="text-amber-700 italic font-medium">Pending Doctor Tele-Review...</span>`;
 
       tr.innerHTML = `
@@ -473,12 +552,12 @@ async function loadNurseCampHistory() {
           <span class="font-bold ${s.is_referable ? 'text-red-700' : 'text-emerald-700'}">${s.grade_name}</span>
           <span class="block text-[10px] text-slate-400">Eye: ${s.eye}</span>
         </td>
-        <td class="py-2.5 px-3 font-mono text-[10px] text-slate-500">
-          📍 ${s.nurse_gps_lat ? s.nurse_gps_lat.toFixed(3) : '9.925'}°N, ${s.nurse_gps_lon ? s.nurse_gps_lon.toFixed(3) : '78.119'}°E
+        <td class="py-2.5 px-3 font-mono text-[10px] text-slate-600 max-w-[150px] truncate" title="${s.nurse_camp_name}">
+          📍 ${s.nurse_camp_name || 'PHC Camp'} (${s.nurse_gps_lat ? s.nurse_gps_lat.toFixed(3) : '9.925'}°N, ${s.nurse_gps_lon ? s.nurse_gps_lon.toFixed(3) : '78.119'}°E)
         </td>
         <td class="py-2.5 px-3">
           <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${
-            isCertified ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'
+            isCertified ? 'bg-emerald-100 text-emerald-800 border border-emerald-300' : 'bg-amber-100 text-amber-800 border border-amber-300'
           }">
             ${isCertified ? '✓ Certified by ' + (s.doctor_signed_by ? s.doctor_signed_by.split(',')[0] : 'Doctor') : 'Pending Review'}
           </span>
@@ -544,6 +623,10 @@ function updatePatientSnapshot(p) {
   document.getElementById("snap-village").textContent = `${p.village} (Manually Entered), ${p.district}`;
   document.getElementById("snap-age-gender").textContent = `${p.age} yrs / ${p.gender}`;
   document.getElementById("snap-clinical").textContent = `${p.hba1c ? p.hba1c + '%' : 'Unknown'} / ${p.diabetes_years} yrs DM`;
+  const emailEl = document.getElementById("snap-email");
+  if (emailEl) emailEl.textContent = p.email || "(No email provided)";
+  const phoneEl = document.getElementById("snap-phone");
+  if (phoneEl) phoneEl.textContent = p.phone || "(No phone provided)";
 }
 
 function openNewPatientModal() {
@@ -735,7 +818,8 @@ async function triggerFundusScreening() {
   btn.disabled = true;
   btnText.textContent = "Analyzing Retinal Microvasculature & Grad-CAM...";
 
-  const campName = currentUser && currentUser.organization ? currentUser.organization : "Mobile Screening Camp";
+  // Use the exact reverse-geocoded address where the nurse is fetching the image
+  const campName = nurseCampGPS.address || (currentUser && currentUser.organization ? currentUser.organization : "Live PHC Mobile Outreach Camp");
 
   const formData = new FormData();
   formData.append("file", selectedFile);
@@ -918,8 +1002,14 @@ async function openDoctorReview(screeningId) {
     
     const latStr = scr.nurse_gps_lat ? scr.nurse_gps_lat.toFixed(4) : "9.9252";
     const lonStr = scr.nurse_gps_lon ? scr.nurse_gps_lon.toFixed(4) : "78.1198";
-    document.getElementById("doc-camp-metadata").textContent = 
-      `📍 Camp: ${scr.nurse_camp_name || 'PHC Camp'} (${latStr}° N, ${lonStr}° E) | Village: ${pat ? pat.village : 'PHC'} | Age: ${pat ? pat.age : '--'} yrs | HbA1c: ${pat ? pat.hba1c + '%' : 'N/A'}`;
+    document.getElementById("doc-camp-metadata").innerHTML = 
+      `<span class="text-sky-800 font-bold">📍 Field Screening Locality (GPS Locked):</span> ${scr.nurse_camp_name || 'PHC Mobile Camp'} (${latStr}° N, ${lonStr}° E)<br/>` +
+      `<span class="text-slate-600">👤 <b>Patient Village (Manual):</b> ${pat ? pat.village : 'PHC'} | <b>Age:</b> ${pat ? pat.age : '--'} yrs | <b>HbA1c:</b> ${pat ? pat.hba1c + '%' : 'N/A'}</span>`;
+
+    const docEmailEl = document.getElementById("doc-patient-email");
+    if (docEmailEl) {
+      docEmailEl.textContent = pat && pat.email ? pat.email : "(No email recorded by nurse)";
+    }
 
     document.getElementById("doc-grade-pill").textContent = `${scr.grade_name} (${scr.eye})`;
 
@@ -1161,10 +1251,14 @@ async function submitDoctorCertification() {
     const notif = result.notifications;
     let notifMsg = "";
     if (notif) {
-      notifMsg = `\n\n📲 Automated Patient Alerts Dispatched:\n• WhatsApp Alert: ${notif.whatsapp.status} to ${notif.whatsapp.recipient_phone}\n• Email Alert: ${notif.email.status} to ${notif.email.recipient_email}`;
+      notifMsg = `\n\n📧 Automated Direct Patient Dispatch:\n• Target Email: ${notif.email.recipient_email || '(None)'}\n• Email Delivery Status: ${notif.email.status}`;
+      if (notif.email.error) {
+        notifMsg += `\n  ℹ️ ${notif.email.error}`;
+      }
+      notifMsg += `\n• WhatsApp Notification: ${notif.whatsapp.status}`;
     }
 
-    alert(`✓ Screening Certified Successfully!\nSigned By: ${result.doctor_signed_by}\nAction: ${actionVal}${notifMsg}`);
+    alert(`✓ Screening Certified & Signed!\nDoctor: ${result.doctor_signed_by}\nAction: ${actionVal}${notifMsg}`);
     loadDoctorQueue();
   } catch (err) {
     alert("Notice: " + err.message);
@@ -1409,3 +1503,139 @@ function updateSimChart(totalPatients, referablePatients) {
   simChartInstance.data.datasets[0].data = [Math.round(totalPatients), Math.round(referablePatients)];
   simChartInstance.update();
 }
+
+
+// =========================================================================
+// 5. PATIENT SCREENINGS REFRESH & EMAIL GATEWAY SETTINGS
+// =========================================================================
+
+async function loadPatientScreenings(patientId) {
+  try {
+    const res = await fetch(`/api/patients/${patientId}`);
+    if (!res.ok) return;
+    const data = await res.json();
+    currentPatient = data.patient;
+    currentPatientScreenings = data.screenings || [];
+    renderPatientPortalData();
+  } catch (err) {
+    console.warn("loadPatientScreenings error:", err);
+  }
+}
+
+async function openEmailSettingsModal() {
+  const modal = document.getElementById("modal-email-settings");
+  if (!modal) return;
+  modal.classList.remove("hidden");
+  const statusBadge = document.getElementById("smtp-status-badge");
+  const statusText = document.getElementById("smtp-status-text");
+
+  try {
+    const res = await fetch("/api/notification/smtp-config");
+    if (res.ok) {
+      const data = await res.json();
+      if (data.is_configured && statusBadge) {
+        statusBadge.className = "p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between";
+        statusText.innerHTML = `✓ Active Sender Configured: <b>${data.smtp_user}</b> (${data.smtp_host}:${data.smtp_port})`;
+        if (document.getElementById("inp-smtp-user")) document.getElementById("inp-smtp-user").value = data.smtp_user;
+        if (document.getElementById("inp-smtp-host")) document.getElementById("inp-smtp-host").value = data.smtp_host;
+        if (document.getElementById("inp-smtp-port")) document.getElementById("inp-smtp-port").value = data.smtp_port;
+        if (document.getElementById("inp-smtp-name")) document.getElementById("inp-smtp-name").value = data.sender_name;
+      }
+    }
+  } catch (e) {
+    console.warn("Error fetching smtp config:", e);
+  }
+}
+
+function closeEmailSettingsModal() {
+  const modal = document.getElementById("modal-email-settings");
+  if (modal) modal.classList.add("hidden");
+}
+
+async function handleSaveSMTPConfig(e) {
+  e.preventDefault();
+  const smtp_user = document.getElementById("inp-smtp-user").value.trim();
+  const smtp_password = document.getElementById("inp-smtp-pass").value.trim();
+  const smtp_host = document.getElementById("inp-smtp-host").value.trim() || "smtp.gmail.com";
+  const smtp_port = parseInt(document.getElementById("inp-smtp-port").value) || 587;
+  const sender_name = document.getElementById("inp-smtp-name").value.trim() || "RetinaAI National Eye Care Program";
+
+  try {
+    const res = await fetch("/api/notification/smtp-config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        smtp_user,
+        smtp_password,
+        smtp_host,
+        smtp_port,
+        sender_name
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Failed to save SMTP settings.");
+    }
+
+    const data = await res.json();
+    alert(`✓ Success: ${data.message}`);
+    openEmailSettingsModal();
+  } catch (err) {
+    alert("SMTP Notice: " + err.message);
+  }
+}
+
+async function handleSendTestEmail() {
+  const destEmail = document.getElementById("inp-test-email-dest").value.trim();
+  const feedback = document.getElementById("test-email-feedback");
+  const btn = document.getElementById("btn-send-test-email");
+
+  if (!destEmail || !destEmail.includes("@")) {
+    alert("Please enter a valid email address to receive the test email.");
+    return;
+  }
+
+  btn.disabled = true;
+  feedback.className = "text-[11px] text-sky-600 font-semibold animate-pulse";
+  feedback.textContent = `Connecting to SMTP server and transmitting verification email to ${destEmail}...`;
+
+  try {
+    const res = await fetch("/api/notification/test-email", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ recipient_email: destEmail })
+    });
+
+    const data = await res.json();
+    if (!res.ok) {
+      throw new Error(data.detail || "Test email delivery failed.");
+    }
+
+    feedback.className = "text-[11px] text-emerald-700 font-bold";
+    feedback.textContent = `✓ ${data.message} Please check your inbox (or spam folder).`;
+  } catch (err) {
+    feedback.className = "text-[11px] text-rose-700 font-bold";
+    feedback.textContent = `❌ ${err.message}`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function openWhatsAppShare(phone, patientName, grade, action, rx) {
+  const cleanPhone = (phone || "").replace(/[^0-9]/g, "");
+  const targetPhone = cleanPhone.length === 10 ? `91${cleanPhone}` : cleanPhone;
+  const msg = 
+    `🏥 *Govt. of Tamil Nadu & RetinaAI Tele-Ophthalmology Program*\n\n` +
+    `Dear *${patientName || 'Patient'}*,\n` +
+    `Your diabetic retinopathy screening report has been certified by an eye specialist.\n\n` +
+    `📊 *Diagnosis:* ${grade || 'Referral'}\n` +
+    `📋 *Specialist Action:* ${action || 'Consultation Completed'}\n` +
+    `💊 *Advice / Prescription:* ${rx || 'Follow routine eye care'}\n\n` +
+    `📄 View full report at: http://localhost:8000\n` +
+    `Please present your report QR code at the PHC reception for priority consultation.`;
+
+  const url = `https://wa.me/${targetPhone}?text=${encodeURIComponent(msg)}`;
+  window.open(url, "_blank");
+}
+

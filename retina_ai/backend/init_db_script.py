@@ -107,6 +107,15 @@ def setup_database():
             "Dr. K. Rajasekaran, District Health Officer",
             "DHO-MAD-01",
             "District Health Directorate"
+        ),
+        (
+            "ramesh_patient",
+            "patient@retina.ai",
+            hash_password("patient123"),
+            "patient",
+            "Ramesh Kumar",
+            "PAT-2026-0001",
+            "Kallandiri Village, Madurai"
         )
     ]
 

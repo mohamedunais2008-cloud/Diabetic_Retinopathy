@@ -14,6 +14,7 @@ class PatientBase(BaseModel):
     age: Optional[int] = Field(50, ge=1, le=120, example=54)
     gender: Optional[str] = Field("Male", example="Male")
     phone: Optional[str] = Field(None, example="+91 98765 43210")
+    email: Optional[str] = Field(None, example="patient@gmail.com")
     village: Optional[str] = Field("Rural Village", example="Alanganallur")
     district: Optional[str] = Field("Madurai", example="Madurai")
     diabetes_years: Optional[float] = Field(0.0, ge=0.0, example=8.5)

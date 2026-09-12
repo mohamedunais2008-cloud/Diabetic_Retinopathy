@@ -38,6 +38,7 @@ def create_patient(patient_in: PatientCreate, db: Session = Depends(get_db)):
         age=patient_in.age,
         gender=patient_in.gender,
         phone=patient_in.phone,
+        email=patient_in.email,
         village=patient_in.village,  # Manually entered by nurse
         district=patient_in.district,
         diabetes_years=patient_in.diabetes_years,
@@ -170,3 +171,37 @@ def format_patient_records(patient: Patient, screenings: List[ScreeningRecord]) 
             for s in screenings
         ]
     }
+
+
+class PatientUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    village: Optional[str] = None
+    district: Optional[str] = None
+    age: Optional[int] = None
+    gender: Optional[str] = None
+    diabetes_years: Optional[float] = None
+    hba1c: Optional[float] = None
+
+
+@router.put("/{patient_id}")
+def update_patient(patient_id: int, req: PatientUpdateRequest, db: Session = Depends(get_db)):
+    """Updates patient demographics or contact email for report forwarding."""
+    pat = db.query(Patient).filter(Patient.id == patient_id).first()
+    if not pat:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if req.full_name is not None: pat.full_name = req.full_name.strip()
+    if req.phone is not None: pat.phone = req.phone.strip()
+    if req.email is not None: pat.email = req.email.strip()
+    if req.village is not None: pat.village = req.village.strip()
+    if req.district is not None: pat.district = req.district.strip()
+    if req.age is not None: pat.age = req.age
+    if req.gender is not None: pat.gender = req.gender
+    if req.diabetes_years is not None: pat.diabetes_years = req.diabetes_years
+    if req.hba1c is not None: pat.hba1c = req.hba1c
+
+    db.commit()
+    db.refresh(pat)
+    return pat

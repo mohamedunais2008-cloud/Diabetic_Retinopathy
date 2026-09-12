@@ -1,0 +1,7 @@
+﻿{
+  "smtp_host": "smtp.gmail.com",
+  "smtp_port": 587,
+  "smtp_user": "your_gmail@gmail.com",
+  "smtp_password": "your_16_char_google_app_password",
+  "sender_name": "RetinaAI National Eye Care Program"
+}

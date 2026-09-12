@@ -3,6 +3,7 @@ Patient Communication & WhatsApp Alert Notification Routes
 Problem Statement 26038: Explainable AI for Diabetic Retinopathy Screening in Rural India
 """
 
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -11,6 +12,8 @@ from ..database.connection import get_db
 from ..database.models import ScreeningRecord, Patient
 from ..services.voice_service import VoiceService
 from ..services.gps_service import GPSService
+from ..services.email_config import get_smtp_config, save_smtp_config
+from ..services.notification_service import NotificationService
 
 router = APIRouter(prefix="/api/notification", tags=["Notifications & Patient Voice Guidance"])
 
@@ -127,4 +130,148 @@ def get_voice_scripts(screening_id: int, db: Session = Depends(get_db)):
         "icdr_grade": scr.icdr_grade,
         "grade_name": scr.grade_name,
         "scripts": scripts
+    }
+
+
+class SMTPConfigUpdate(BaseModel):
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 587
+    smtp_user: str
+    smtp_password: str
+    sender_name: Optional[str] = "RetinaAI National Eye Care Program"
+
+
+class TestEmailRequest(BaseModel):
+    recipient_email: str
+
+
+@router.get("/smtp-config")
+def get_smtp_status():
+    """
+    Returns current SMTP configuration status (with password masked).
+    """
+    config = get_smtp_config()
+    return {
+        "is_configured": config.get("is_configured", False),
+        "smtp_host": config.get("smtp_host", "smtp.gmail.com"),
+        "smtp_port": config.get("smtp_port", 587),
+        "smtp_user": config.get("smtp_user", ""),
+        "sender_name": config.get("sender_name", "RetinaAI National Eye Care Program"),
+        "password_set": bool(config.get("smtp_password"))
+    }
+
+
+@router.post("/smtp-config")
+def update_smtp_settings(req: SMTPConfigUpdate):
+    """
+    Saves SMTP credentials into email_config.json.
+    """
+    saved = save_smtp_config(
+        host=req.smtp_host,
+        port=req.smtp_port,
+        user=req.smtp_user,
+        password=req.smtp_password,
+        sender_name=req.sender_name
+    )
+    return {
+        "success": True,
+        "message": f"SMTP Gateway configured for sender: {saved['smtp_user']}",
+        "config": {
+            "is_configured": saved["is_configured"],
+            "smtp_host": saved["smtp_host"],
+            "smtp_port": saved["smtp_port"],
+            "smtp_user": saved["smtp_user"],
+            "sender_name": saved["sender_name"]
+        }
+    }
+
+
+@router.post("/test-email")
+def test_send_email(req: TestEmailRequest):
+    """
+    Sends an immediate live test email to verify SMTP delivery to real inboxes.
+    """
+    recipient = req.recipient_email.strip()
+    if not recipient or "@" not in recipient or "." not in recipient:
+        raise HTTPException(status_code=400, detail="Please provide a valid recipient email address.")
+
+    subject = "🧪 RetinaAI Telemedicine Gateway - Live Email Verification Test"
+    text = (
+        f"Hello,\n\n"
+        f"This is a live test email confirming that your RetinaAI Email Notification Gateway is properly configured and operational!\n\n"
+        f"When an ophthalmologist certifies a patient's diabetic retinopathy screening, the full clinical report, digital prescription, and referral hospital details will be delivered automatically to their inbox.\n\n"
+        f"Problem Statement 26038: Explainable AI for Diabetic Retinopathy Screening in Rural India\n"
+        f"Smart India Hackathon (SIH 2026)\n"
+    )
+    html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head><meta charset="UTF-8"></head>
+    <body style="font-family: Arial, sans-serif; background-color: #f1f5f9; padding: 20px; color: #1e293b;">
+      <div style="max-width: 540px; margin: auto; background: white; border-radius: 12px; border: 1px solid #cbd5e1; padding: 24px;">
+        <div style="text-align: center; border-bottom: 2px solid #0284c7; padding-bottom: 12px; margin-bottom: 16px;">
+          <h2 style="color: #0c4a6e; margin: 0;">RetinaAI Tele-Ophthalmology</h2>
+          <p style="color: #64748b; font-size: 13px; margin: 4px 0 0 0;">Automated Notification Gateway &bull; Live SMTP Test</p>
+        </div>
+        <div style="background: #f0fdf4; border: 1px solid #86efac; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+          <b style="color: #166534;">✓ Connection Verified (250 OK)</b>
+          <p style="margin: 4px 0 0 0; font-size: 13px; color: #15803d;">Your Gmail SMTP credentials are valid and live emails are actively transmitting.</p>
+        </div>
+        <p style="font-size: 14px; line-height: 1.5;">When an eye specialist certifies a fundus examination, the patient will immediately receive their complete diagnostic report, digital prescription, and referral slip at this email address.</p>
+        <div style="font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0; padding-top: 12px; margin-top: 16px; text-align: center;">
+          Problem Statement 26038 &bull; MathWorks / SIH 2026
+        </div>
+      </div>
+    </body>
+    </html>
+    """
+    res = NotificationService.send_real_email(
+        recipient_email=recipient,
+        recipient_name="RetinaAI Evaluator",
+        subject=subject,
+        text_content=text,
+        html_content=html
+    )
+    if not res.get("sent"):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Email delivery failed: {res.get('error', 'Unknown SMTP error')}. Please check that your sender Gmail address and 16-character App Password are correct."
+        )
+    return {
+        "success": True,
+        "message": f"✓ Live test email successfully delivered to {recipient}!",
+        "result": res
+    }
+
+
+@router.post("/resend-screening-email/{screening_id}")
+def resend_screening_email(screening_id: int, db: Session = Depends(get_db)):
+    """
+    Manually re-triggers automated email delivery of certified report to the patient's email.
+    """
+    scr = db.query(ScreeningRecord).filter(ScreeningRecord.id == screening_id).first()
+    if not scr:
+        raise HTTPException(status_code=404, detail="Screening record not found")
+
+    pat = db.query(Patient).filter(Patient.id == scr.patient_id).first()
+    if not pat or not pat.email:
+        raise HTTPException(status_code=400, detail="No patient email address found for this screening record.")
+
+    alerts = NotificationService.send_screening_ready_alerts(
+        screening=scr,
+        patient=pat,
+        doctor_signed_by=scr.doctor_signed_by or "Dr. Meenakshi Sundaram, MS (Ophthalmology)",
+        doctor_clinical_action=scr.doctor_clinical_action or "Urgent Clinical Follow-up",
+        doctor_prescription=scr.doctor_prescription or "Follow certified ophthalmic guidelines"
+    )
+    db.commit()
+    db.refresh(scr)
+
+    return {
+        "success": True,
+        "screening_id": scr.id,
+        "patient_uid": pat.patient_uid,
+        "patient_email": pat.email,
+        "email_status": scr.email_status,
+        "notifications": alerts
     }
