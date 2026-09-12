@@ -1,23 +1,26 @@
 /**
- * RetinaAI Frontend Client Engine (v2.0)
+ * RetinaAI Frontend Client Engine (v2.5)
  * 4-Stakeholder Telemedicine & Explainable AI Screening System
  * Problem Statement 26038: Explainable AI for Diabetic Retinopathy Screening in Rural India
  * MathWorks / Smart India Hackathon (SIH 2026)
  */
 
 // ---------------- GLOBAL APPLICATION STATE ----------------
-let currentRole = "nurse";
+let currentAuthRole = "nurse"; // nurse, doctor, patient, admin
+let currentUser = null;        // Authenticated health worker
+let currentPatient = null;     // Authenticated patient
 let patientsList = [];
 let activePatient = null;
 let activeEye = "OD";
 let selectedFile = null;
 let currentScreeningResult = null;
 
-// Nurse Camp GPS Coordinates
+// Nurse Camp GPS Coordinates (Real-time tracking)
 let nurseCampGPS = {
   lat: 9.9252,
   lon: 78.1198,
-  accuracy: 12.0,
+  accuracy: 10.0,
+  address: "Madurai North PHC Outreach Camp, Tamil Nadu",
   isLive: false
 };
 
@@ -29,7 +32,7 @@ let caliperPoints = [];
 let speechRecognizer = null;
 let isDictating = false;
 
-// Patient Portal State
+// Patient Screenings State
 let currentPatientScreenings = [];
 
 // Simulink Chart Instance
@@ -38,114 +41,464 @@ let simChartInstance = null;
 
 // ---------------- INITIALIZATION ----------------
 document.addEventListener("DOMContentLoaded", () => {
-  initLiveGPS();
-  loadPatients();
-  loadDoctorQueue();
-  initSimChart();
-  runSimulation();
-  initDoctorLoupe();
+  checkExistingSession();
   initVoiceRecognition();
-
+  initSimChart();
   if (window.lucide) lucide.createIcons();
 });
 
 
-// ---------------- ROLE NAVIGATION SWITCHER ----------------
-function switchRole(roleName) {
-  currentRole = roleName;
-  const roles = ["nurse", "doctor", "patient", "admin", "mlhub"];
+// ---------------- AUTHENTICATION & SESSION MANAGEMENT ----------------
+function checkExistingSession() {
+  const savedUser = localStorage.getItem("retina_user");
+  const savedPatient = localStorage.getItem("retina_patient");
+
+  if (savedUser) {
+    try {
+      currentUser = JSON.parse(savedUser);
+      enterPortal(currentUser.role);
+      return;
+    } catch (e) {
+      localStorage.removeItem("retina_user");
+    }
+  }
+
+  if (savedPatient) {
+    try {
+      currentPatient = JSON.parse(savedPatient);
+      enterPortal("patient");
+      return;
+    } catch (e) {
+      localStorage.removeItem("retina_patient");
+    }
+  }
+
+  // If not logged in, show the Login Gateway
+  showLoginView();
+}
+
+function showLoginView() {
+  document.getElementById("view-login").classList.remove("hidden");
+  document.getElementById("portal-nurse").classList.add("hidden");
+  document.getElementById("portal-doctor").classList.add("hidden");
+  document.getElementById("portal-patient").classList.add("hidden");
+  document.getElementById("portal-admin").classList.add("hidden");
+
+  document.getElementById("header-user-badge").classList.add("hidden");
+  document.getElementById("header-guest-badge").classList.remove("hidden");
+  document.getElementById("header-authenticated-nav").innerHTML = "";
+
+  selectAuthRole(currentAuthRole || "nurse");
+  if (window.lucide) lucide.createIcons();
+}
+
+function handleLogoClick() {
+  if (currentUser || currentPatient) {
+    // Already in portal
+  } else {
+    showLoginView();
+  }
+}
+
+function selectAuthRole(role) {
+  currentAuthRole = role;
+  const roles = ["nurse", "doctor", "patient", "admin"];
   
   roles.forEach(r => {
-    const portal = document.getElementById(`portal-${r}`);
-    const navBtn = document.getElementById(`nav-role-${r}`);
-    if (portal) portal.classList.add("hidden");
-    if (navBtn) {
-      navBtn.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all text-slate-300 hover:text-white hover:bg-brand-700/60 flex items-center space-x-1.5";
+    const tab = document.getElementById(`tab-auth-${r}`);
+    if (tab) {
+      tab.className = "p-3.5 rounded-2xl border-2 transition-all text-center flex flex-col items-center justify-center space-y-1.5 border-slate-200 bg-white hover:border-slate-300 text-slate-700";
     }
   });
 
-  const activePortal = document.getElementById(`portal-${roleName}`);
-  const activeNavBtn = document.getElementById(`nav-role-${roleName}`);
-  if (activePortal) activePortal.classList.remove("hidden");
-  if (activeNavBtn) {
-    activeNavBtn.className = "px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all bg-sky-500 text-white shadow flex items-center space-x-1.5";
+  const activeTab = document.getElementById(`tab-auth-${role}`);
+  if (activeTab) {
+    if (role === "nurse") activeTab.className = "p-3.5 rounded-2xl border-2 transition-all text-center flex flex-col items-center justify-center space-y-1.5 border-sky-600 bg-sky-50/70 text-sky-900 shadow-sm";
+    if (role === "doctor") activeTab.className = "p-3.5 rounded-2xl border-2 transition-all text-center flex flex-col items-center justify-center space-y-1.5 border-indigo-600 bg-indigo-50/70 text-indigo-900 shadow-sm";
+    if (role === "patient") activeTab.className = "p-3.5 rounded-2xl border-2 transition-all text-center flex flex-col items-center justify-center space-y-1.5 border-emerald-600 bg-emerald-50/70 text-emerald-900 shadow-sm";
+    if (role === "admin") activeTab.className = "p-3.5 rounded-2xl border-2 transition-all text-center flex flex-col items-center justify-center space-y-1.5 border-slate-800 bg-slate-100 text-slate-900 shadow-sm";
   }
 
-  // Update top session label
-  const label = document.getElementById("current-user-role-label");
-  if (label) {
-    const roleLabels = {
-      nurse: "Staff Nurse (Kavitha) - Field Camp",
-      doctor: "Dr. Meenakshi Sundaram - Specialist",
-      patient: "Citizen Eye Health Portal",
-      admin: "District Health Officer (DHO)",
-      mlhub: "ML Integration Engineer"
-    };
-    label.textContent = roleLabels[roleName] || "RetinaAI Session";
+  // Toggle Worker form vs Patient Lookup form
+  const workerBox = document.getElementById("auth-box-worker");
+  const patientBox = document.getElementById("auth-box-patient");
+
+  if (role === "patient") {
+    workerBox.classList.add("hidden");
+    patientBox.classList.remove("hidden");
+  } else {
+    workerBox.classList.remove("hidden");
+    patientBox.classList.add("hidden");
+    updateWorkerAuthHeaders(role);
   }
 
-  // Auto-refresh data when switching to specific roles
-  if (roleName === "doctor") loadDoctorQueue();
-  if (roleName === "admin") loadAdminMetrics();
-  if (roleName === "patient") populatePatientPortalSelector();
+  if (window.lucide) lucide.createIcons();
+}
+
+function updateWorkerAuthHeaders(role) {
+  const title = document.getElementById("worker-auth-title");
+  const demoLbl = document.getElementById("lbl-quick-demo");
+  const btnSubmit = document.getElementById("btn-submit-worker-login");
+  const inpUser = document.getElementById("inp-login-username");
+  const inpPass = document.getElementById("inp-login-password");
+
+  if (role === "nurse") {
+    title.textContent = "Staff Nurse & ASHA Camp Worker Portal Login";
+    demoLbl.textContent = "1-Click Demo Login as Staff Nurse Kavitha";
+    btnSubmit.className = "w-full py-3 rounded-xl bg-sky-600 hover:bg-sky-700 text-white font-black text-sm shadow-md transition-all flex items-center justify-center space-x-2";
+    inpUser.value = "nurse@retina.ai";
+    inpPass.value = "nurse123";
+  } else if (role === "doctor") {
+    title.textContent = "Ophthalmologist Specialist Tele-Review Login";
+    demoLbl.textContent = "1-Click Demo Login as Dr. Meenakshi Sundaram";
+    btnSubmit.className = "w-full py-3 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white font-black text-sm shadow-md transition-all flex items-center justify-center space-x-2";
+    inpUser.value = "doctor@retina.ai";
+    inpPass.value = "doctor123";
+  } else if (role === "admin") {
+    title.textContent = "District Health Officer (DHO) Command Login";
+    demoLbl.textContent = "1-Click Demo Login as District Admin";
+    btnSubmit.className = "w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-900 text-white font-black text-sm shadow-md transition-all flex items-center justify-center space-x-2";
+    inpUser.value = "admin@retina.ai";
+    inpPass.value = "admin123";
+  }
+}
+
+function setAuthMode(mode) {
+  const signinForm = document.getElementById("form-worker-signin");
+  const regForm = document.getElementById("form-worker-register");
+  const btnSign = document.getElementById("btn-mode-signin");
+  const btnReg = document.getElementById("btn-mode-register");
+
+  if (mode === "signin") {
+    signinForm.classList.remove("hidden");
+    regForm.classList.add("hidden");
+    btnSign.className = "px-3 py-1 rounded-md bg-white text-sky-700 shadow-sm font-bold";
+    btnReg.className = "px-3 py-1 rounded-md text-slate-600 hover:text-slate-900 font-bold";
+  } else {
+    signinForm.classList.add("hidden");
+    regForm.classList.remove("hidden");
+    btnReg.className = "px-3 py-1 rounded-md bg-white text-sky-700 shadow-sm font-bold";
+    btnSign.className = "px-3 py-1 rounded-md text-slate-600 hover:text-slate-900 font-bold";
+  }
+}
+
+// Handle Sign In (Nurse, Doctor, Admin)
+async function handleWorkerSignIn(e) {
+  e.preventDefault();
+  const username_or_email = document.getElementById("inp-login-username").value.trim();
+  const password = document.getElementById("inp-login-password").value.trim();
+
+  try {
+    const res = await fetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username_or_email, password })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Authentication failed.");
+    }
+
+    const data = await res.json();
+    currentUser = data.user;
+    localStorage.setItem("retina_user", JSON.stringify(currentUser));
+    localStorage.removeItem("retina_patient");
+
+    enterPortal(currentUser.role);
+  } catch (err) {
+    alert("Login Notice: " + err.message);
+  }
+}
+
+// Handle Health Worker Registration
+async function handleWorkerRegister(e) {
+  e.preventDefault();
+  const full_name = document.getElementById("inp-reg-name").value.trim();
+  const username = document.getElementById("inp-reg-username").value.trim();
+  const email = document.getElementById("inp-reg-email").value.trim();
+  const license_or_id = document.getElementById("inp-reg-license").value.trim();
+  const organization = document.getElementById("inp-reg-org").value.trim();
+  const password = document.getElementById("inp-reg-password").value.trim();
+
+  try {
+    const res = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        full_name,
+        username,
+        email,
+        license_or_id,
+        organization,
+        password,
+        role: currentAuthRole
+      })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Registration failed.");
+    }
+
+    const data = await res.json();
+    currentUser = data.user;
+    localStorage.setItem("retina_user", JSON.stringify(currentUser));
+    localStorage.removeItem("retina_patient");
+
+    alert(`✓ Welcome, ${currentUser.full_name}! Registration successful.`);
+    enterPortal(currentUser.role);
+  } catch (err) {
+    alert("Registration Notice: " + err.message);
+  }
+}
+
+// Handle Patient Secure Lookup (ID or Mobile No)
+async function handlePatientLookup(e) {
+  e.preventDefault();
+  const identifier = document.getElementById("inp-patient-identifier").value.trim();
+  if (!identifier) {
+    alert("Please enter your Patient UID or registered phone number.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/patients/lookup", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ identifier })
+    });
+
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || "Patient record not found.");
+    }
+
+    const data = await res.json();
+    currentPatient = data.patient;
+    currentPatientScreenings = data.screenings || [];
+
+    localStorage.setItem("retina_patient", JSON.stringify(currentPatient));
+    localStorage.removeItem("retina_user");
+
+    enterPortal("patient");
+  } catch (err) {
+    alert("Patient Access Notice: " + err.message);
+  }
+}
+
+function performDemoLogin() {
+  const inpUser = document.getElementById("inp-login-username");
+  const inpPass = document.getElementById("inp-login-password");
+
+  if (currentAuthRole === "nurse") {
+    inpUser.value = "nurse@retina.ai";
+    inpPass.value = "nurse123";
+  } else if (currentAuthRole === "doctor") {
+    inpUser.value = "doctor@retina.ai";
+    inpPass.value = "doctor123";
+  } else if (currentAuthRole === "admin") {
+    inpUser.value = "admin@retina.ai";
+    inpPass.value = "admin123";
+  }
+
+  document.getElementById("form-worker-signin").dispatchEvent(new Event("submit"));
+}
+
+function performDemoPatientLogin() {
+  document.getElementById("inp-patient-identifier").value = "PAT-2026-0001";
+  handlePatientLookup(new Event("submit"));
+}
+
+function handleSignOut() {
+  currentUser = null;
+  currentPatient = null;
+  localStorage.removeItem("retina_user");
+  localStorage.removeItem("retina_patient");
+  showLoginView();
+}
+
+// Switch into Authenticated Portal
+function enterPortal(role) {
+  document.getElementById("view-login").classList.add("hidden");
+  document.getElementById("portal-nurse").classList.add("hidden");
+  document.getElementById("portal-doctor").classList.add("hidden");
+  document.getElementById("portal-patient").classList.add("hidden");
+  document.getElementById("portal-admin").classList.add("hidden");
+
+  // Show Header User Badge
+  const userBadge = document.getElementById("header-user-badge");
+  const guestBadge = document.getElementById("header-guest-badge");
+  userBadge.classList.remove("hidden");
+  guestBadge.classList.add("hidden");
+
+  const nameEl = document.getElementById("header-user-name");
+  const roleTag = document.getElementById("header-user-role-tag");
+
+  if (role === "patient" && currentPatient) {
+    nameEl.textContent = `${currentPatient.full_name} (${currentPatient.patient_uid})`;
+    roleTag.textContent = "Citizen / Patient";
+    roleTag.className = "text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30";
+    document.getElementById("portal-patient").classList.remove("hidden");
+    renderPatientPortalData();
+  } else if (currentUser) {
+    nameEl.textContent = currentUser.full_name;
+    roleTag.textContent = currentUser.role.toUpperCase();
+
+    if (currentUser.role === "nurse") {
+      document.getElementById("portal-nurse").classList.remove("hidden");
+      autoTrackNurseGPS(); // Automatic GPS locking
+      loadPatients();
+      loadNurseCampHistory();
+    } else if (currentUser.role === "doctor") {
+      document.getElementById("portal-doctor").classList.remove("hidden");
+      loadDoctorQueue();
+      initDoctorLoupe();
+    } else if (currentUser.role === "admin") {
+      document.getElementById("portal-admin").classList.remove("hidden");
+      loadAdminMetrics();
+      runSimulation();
+    }
+  }
 
   if (window.lucide) lucide.createIcons();
 }
 
 
 // =========================================================================
-// 1. NURSE & ASHA WORKER PORTAL LOGIC
+// 1. NURSE / ASHA PORTAL (AUTOMATIC GPS & CAMP HISTORY)
 // =========================================================================
 
-// Capture Live GPS using HTML5 Geolocation API
-function initLiveGPS() {
+// Automatic GPS Tracking (HTML5 Geolocation + Reverse Geocoding)
+function autoTrackNurseGPS() {
+  const coordsEl = document.getElementById("nurse-gps-coords-display");
+  const addrEl = document.getElementById("nurse-gps-address-display");
+
+  if (coordsEl) coordsEl.textContent = "📍 Acquiring high-precision live GPS satellite lock...";
+
   if ("geolocation" in navigator) {
     navigator.geolocation.getCurrentPosition(
-      (pos) => {
+      async (pos) => {
         nurseCampGPS.lat = pos.coords.latitude;
         nurseCampGPS.lon = pos.coords.longitude;
         nurseCampGPS.accuracy = pos.coords.accuracy;
         nurseCampGPS.isLive = true;
-        updateNurseGPSDisplay();
+
+        if (coordsEl) {
+          coordsEl.textContent = `📍 Live GPS Locked: ${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E (Accuracy: ±${Math.round(nurseCampGPS.accuracy)}m)`;
+        }
+
+        // Reverse-geocoding via OpenStreetMap Nominatim
+        try {
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${nurseCampGPS.lat}&lon=${nurseCampGPS.lon}`);
+          if (res.ok) {
+            const data = await res.json();
+            const addr = data.display_name || "Madurai District, Tamil Nadu";
+            nurseCampGPS.address = addr;
+            if (addrEl) addrEl.textContent = `Address: ${addr}`;
+          }
+        } catch (e) {
+          if (addrEl) addrEl.textContent = "Address: PHC Outreach Camp Locality, Tamil Nadu";
+        }
       },
       (err) => {
-        console.warn("GPS Permission not granted or unavailable, using calibrated PHC coordinates:", err.message);
-        updateNurseGPSDisplay();
+        console.warn("Browser GPS permission not granted or timeout:", err.message);
+        if (coordsEl) {
+          coordsEl.textContent = `📍 Calibrated Camp GPS: ${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E (Outreach Van Unit)`;
+        }
+        if (addrEl) {
+          addrEl.textContent = `Address: ${nurseCampGPS.address}`;
+        }
       },
       { enableHighAccuracy: true, timeout: 8000 }
     );
+  }
+}
+
+function switchNurseSubTab(tab) {
+  const screenView = document.getElementById("nurse-view-screen");
+  const historyView = document.getElementById("nurse-view-history");
+  const btnScreen = document.getElementById("nurse-subtab-screen");
+  const btnHistory = document.getElementById("nurse-subtab-history");
+
+  if (tab === "screen") {
+    screenView.classList.remove("hidden");
+    historyView.classList.add("hidden");
+    btnScreen.className = "px-3.5 py-2 rounded-xl bg-sky-600 text-white font-bold text-xs shadow-sm flex items-center space-x-1.5";
+    btnHistory.className = "px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-300 flex items-center space-x-1.5";
   } else {
-    updateNurseGPSDisplay();
+    screenView.classList.add("hidden");
+    historyView.classList.remove("hidden");
+    btnHistory.className = "px-3.5 py-2 rounded-xl bg-sky-600 text-white font-bold text-xs shadow-sm flex items-center space-x-1.5";
+    btnScreen.className = "px-3.5 py-2 rounded-xl bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs border border-slate-300 flex items-center space-x-1.5";
+    loadNurseCampHistory();
   }
+  if (window.lucide) lucide.createIcons();
 }
 
-function captureLiveNurseGPS() {
-  const display = document.getElementById("nurse-gps-coords-display");
-  if (display) display.textContent = "📍 Acquiring high-precision GPS lock...";
-  
-  if ("geolocation" in navigator) {
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        nurseCampGPS.lat = pos.coords.latitude;
-        nurseCampGPS.lon = pos.coords.longitude;
-        nurseCampGPS.accuracy = pos.coords.accuracy;
-        nurseCampGPS.isLive = true;
-        updateNurseGPSDisplay();
-        alert(`✓ Live GPS Location Locked:\nLatitude: ${pos.coords.latitude.toFixed(4)}° N\nLongitude: ${pos.coords.longitude.toFixed(4)}° E\nAccuracy: ±${Math.round(pos.coords.accuracy)}m`);
-      },
-      (err) => {
-        alert("Notice: Could not acquire live browser GPS (" + err.message + "). Defaulting to PHC camp calibrated coordinates (9.9252° N, 78.1198° E).");
-        updateNurseGPSDisplay();
-      }
-    );
-  }
-}
+async function loadNurseCampHistory() {
+  try {
+    const res = await fetch("/api/doctor/camp-screenings");
+    const data = await res.json();
+    const list = data.queue || [];
 
-function updateNurseGPSDisplay() {
-  const display = document.getElementById("nurse-gps-coords-display");
-  if (display) {
-    const status = nurseCampGPS.isLive ? "Live GPS Locked" : "Calibrated PHC GPS";
-    display.textContent = `📍 ${status}: ${nurseCampGPS.lat.toFixed(4)}° N, ${nurseCampGPS.lon.toFixed(4)}° E`;
+    const badge = document.getElementById("nurse-history-badge");
+    if (badge) badge.textContent = list.length;
+
+    const tbody = document.getElementById("nurse-camp-history-tbody");
+    if (!tbody) return;
+    tbody.innerHTML = "";
+
+    if (list.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="7" class="py-8 text-center text-slate-400">No screenings recorded yet for this mobile camp.</td></tr>`;
+      return;
+    }
+
+    list.forEach(s => {
+      const isCertified = s.doctor_review_status && s.doctor_review_status.includes("Certified");
+      const tr = document.createElement("tr");
+      tr.className = "hover:bg-slate-50 transition-colors";
+
+      const doctorNotes = isCertified
+        ? `<span class="font-bold text-indigo-950">${s.doctor_clinical_action || 'Action Recorded'}</span><br/><span class="text-slate-500 italic">${s.doctor_prescription || ''}</span>`
+        : `<span class="text-amber-700 italic font-medium">Pending Doctor Tele-Review...</span>`;
+
+      tr.innerHTML = `
+        <td class="py-2.5 px-3">
+          <span class="font-bold text-slate-900">${s.patient_name}</span>
+          <span class="block font-mono text-[10px] text-sky-700">${s.patient_uid}</span>
+        </td>
+        <td class="py-2.5 px-3 font-medium text-slate-700">${s.village}</td>
+        <td class="py-2.5 px-3">
+          <span class="font-bold ${s.is_referable ? 'text-red-700' : 'text-emerald-700'}">${s.grade_name}</span>
+          <span class="block text-[10px] text-slate-400">Eye: ${s.eye}</span>
+        </td>
+        <td class="py-2.5 px-3 font-mono text-[10px] text-slate-500">
+          📍 ${s.nurse_gps_lat ? s.nurse_gps_lat.toFixed(3) : '9.925'}°N, ${s.nurse_gps_lon ? s.nurse_gps_lon.toFixed(3) : '78.119'}°E
+        </td>
+        <td class="py-2.5 px-3">
+          <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${
+            isCertified ? 'bg-indigo-100 text-indigo-800' : 'bg-amber-100 text-amber-800'
+          }">
+            ${isCertified ? '✓ Certified by ' + (s.doctor_signed_by ? s.doctor_signed_by.split(',')[0] : 'Doctor') : 'Pending Review'}
+          </span>
+        </td>
+        <td class="py-2.5 px-3 text-[11px] max-w-xs">
+          ${doctorNotes}
+        </td>
+        <td class="py-2.5 px-3 text-right">
+          <a href="${s.report_pdf_url}" target="_blank" class="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-[11px] inline-flex items-center space-x-1 border border-slate-300">
+            <i data-lucide="file-text" class="w-3 h-3 text-rose-600"></i>
+            <span>PDF</span>
+          </a>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    });
+
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    console.error("Error loading camp history:", err);
   }
 }
 
@@ -155,7 +508,6 @@ async function loadPatients() {
     const res = await fetch("/api/patients");
     patientsList = await res.json();
     populatePatientSelect();
-    populatePatientPortalSelector();
   } catch (err) {
     console.error("Error loading patients:", err);
   }
@@ -189,7 +541,7 @@ function onPatientSelected() {
 function updatePatientSnapshot(p) {
   if (!p) return;
   document.getElementById("snap-name").textContent = p.full_name;
-  document.getElementById("snap-village").textContent = `${p.village}, ${p.district}`;
+  document.getElementById("snap-village").textContent = `${p.village} (Manually Entered), ${p.district}`;
   document.getElementById("snap-age-gender").textContent = `${p.age} yrs / ${p.gender}`;
   document.getElementById("snap-clinical").textContent = `${p.hba1c ? p.hba1c + '%' : 'Unknown'} / ${p.diabetes_years} yrs DM`;
 }
@@ -208,9 +560,12 @@ async function handleCreatePatient(e) {
   const rawAge = document.getElementById("inp-age").value;
   const rawDiab = document.getElementById("inp-diabetes-yrs").value;
   const rawHba1c = document.getElementById("inp-hba1c").value;
+  const villageVal = (document.getElementById("inp-village").value || "").trim(); // Manual Entry
+  const phoneVal = (document.getElementById("inp-phone").value || "").trim();
+  const emailVal = (document.getElementById("inp-email").value || "").trim();
 
-  if (!nameVal) {
-    alert("Please enter patient full name.");
+  if (!nameVal || !villageVal) {
+    alert("Please enter patient name and village.");
     return;
   }
 
@@ -218,11 +573,12 @@ async function handleCreatePatient(e) {
     full_name: nameVal,
     age: parseInt(rawAge) || 55,
     gender: document.getElementById("inp-gender").value || "Male",
-    village: (document.getElementById("inp-village").value || "").trim() || "Kallandiri",
+    village: villageVal,
     district: (document.getElementById("inp-district").value || "").trim() || "Madurai",
     diabetes_years: rawDiab ? parseFloat(rawDiab) : 5.0,
     hba1c: rawHba1c ? parseFloat(rawHba1c) : 7.8,
-    phone: (document.getElementById("inp-phone").value || "").trim() || "+91 98421 73829",
+    phone: phoneVal || "+91 98421 73829",
+    email: emailVal || "patient.care@gmail.com",
     hypertension: false,
     smoker: false
   };
@@ -237,22 +593,19 @@ async function handleCreatePatient(e) {
     const newPatient = await res.json();
     patientsList.unshift(newPatient);
     populatePatientSelect();
-    populatePatientPortalSelector();
-    
-    // Auto select
+
     document.getElementById("active-patient-select").value = newPatient.id;
     activePatient = newPatient;
     updatePatientSnapshot(newPatient);
-    
+
     closeNewPatientModal();
     document.getElementById("new-patient-form").reset();
-    alert(`✓ Patient Registered Successfully!\nID: ${newPatient.patient_uid}\nVillage: ${newPatient.village} (Manually Entered)`);
+    alert(`✓ Patient Registered Successfully!\nUID: ${newPatient.patient_uid}\nVillage: ${newPatient.village}`);
   } catch (err) {
     alert("Notice: " + err.message);
   }
 }
 
-// Eye Selection (OD vs OS)
 function setEyeSelection(eye) {
   activeEye = eye;
   const btnOd = document.getElementById("btn-eye-od");
@@ -266,11 +619,13 @@ function setEyeSelection(eye) {
   }
 }
 
-// File Ingestion & Realistic Sample Generator
 function handleFileSelect(e) {
   const file = e.target.files[0];
   if (!file) return;
   selectedFile = file;
+
+  // Auto-lock GPS when file is chosen
+  autoTrackNurseGPS();
 
   const reader = new FileReader();
   reader.onload = (evt) => {
@@ -278,14 +633,14 @@ function handleFileSelect(e) {
     preview.src = evt.target.result;
     preview.classList.remove("hidden");
     document.getElementById("upload-placeholder").classList.add("hidden");
-    
-    // Perform Instant Client-Side IQA Assessment
     evaluateInstantIQA();
   };
   reader.readAsDataURL(file);
 }
 
 function loadSampleFundusImage() {
+  autoTrackNurseGPS();
+
   const canvas = document.createElement("canvas");
   canvas.width = 512;
   canvas.height = 512;
@@ -295,7 +650,7 @@ function loadSampleFundusImage() {
   ctx.fillStyle = "#09090b";
   ctx.fillRect(0, 0, 512, 512);
 
-  // Retinal Disc (Orange/Red gradient)
+  // Retinal Disc
   const grad = ctx.createRadialGradient(256, 256, 30, 256, 256, 230);
   grad.addColorStop(0, "#d35400");
   grad.addColorStop(0.5, "#b93e0b");
@@ -307,7 +662,7 @@ function loadSampleFundusImage() {
   ctx.fillStyle = grad;
   ctx.fill();
 
-  // Optic Disc (bright feature on nasal side)
+  // Optic Disc
   ctx.beginPath();
   ctx.arc(380, 250, 36, 0, Math.PI * 2);
   ctx.fillStyle = "#f39c12";
@@ -326,7 +681,7 @@ function loadSampleFundusImage() {
   ctx.bezierCurveTo(320, 340, 240, 360, 160, 320);
   ctx.stroke();
 
-  // Sub-pixel lesions: Microaneurysms
+  // Microaneurysms
   ctx.fillStyle = "#2d0000";
   const maSpots = [[220, 240], [205, 270], [180, 230], [250, 190], [190, 300], [270, 290]];
   maSpots.forEach(([x, y]) => {
@@ -365,7 +720,6 @@ function evaluateInstantIQA() {
   if (window.lucide) lucide.createIcons();
 }
 
-// Execute AI Screening
 async function triggerFundusScreening() {
   if (!activePatient) {
     alert("Please select or register a patient first.");
@@ -381,7 +735,7 @@ async function triggerFundusScreening() {
   btn.disabled = true;
   btnText.textContent = "Analyzing Retinal Microvasculature & Grad-CAM...";
 
-  const campName = document.getElementById("nurse-camp-input")?.value || "PHC Outreach Mobile Camp";
+  const campName = currentUser && currentUser.organization ? currentUser.organization : "Mobile Screening Camp";
 
   const formData = new FormData();
   formData.append("file", selectedFile);
@@ -400,7 +754,7 @@ async function triggerFundusScreening() {
     if (!res.ok) throw new Error("Screening inference failed");
     currentScreeningResult = await res.json();
     renderScreeningResults(currentScreeningResult);
-    loadDoctorQueue(); // Refresh pending queue for ophthalmologist
+    loadNurseCampHistory();
   } catch (err) {
     alert("Error during screening: " + err.message);
   } finally {
@@ -413,7 +767,7 @@ function renderScreeningResults(data) {
   document.getElementById("results-placeholder").classList.add("hidden");
   document.getElementById("results-panel").classList.remove("hidden");
 
-  // Triage Badge & Status
+  // Verdict & Urgency
   const badgeBox = document.getElementById("triage-badge-container");
   const iconBox = document.getElementById("triage-icon-box");
   const icon = document.getElementById("triage-icon");
@@ -449,7 +803,7 @@ function renderScreeningResults(data) {
   document.getElementById("img-side-raw").src = data.images.raw_url;
   document.getElementById("img-side-grad").src = data.images.gradcam_url;
 
-  // Lesion Counts & Progression Risk
+  // Counts
   const findings = data.pathology_findings || {};
   document.getElementById("res-count-ma").textContent = findings.microaneurysms || 0;
   document.getElementById("res-count-hem").textContent = findings.hemorrhages || 0;
@@ -457,7 +811,6 @@ function renderScreeningResults(data) {
   document.getElementById("res-count-nv").textContent = findings.neovascularization || "Absent";
   document.getElementById("res-progression-risk").textContent = `${data.progression_risk_percent || 52}%`;
 
-  // PDF Link
   const pdfBtn = document.getElementById("res-btn-pdf");
   if (pdfBtn) pdfBtn.href = data.report_pdf_url;
 
@@ -466,61 +819,33 @@ function renderScreeningResults(data) {
 
 function dispatchToDoctorQueue() {
   if (!currentScreeningResult) return;
-  alert(`✓ Screening ${currentScreeningResult.screening_uid} successfully dispatched to the District Tele-Ophthalmology Triage Queue!\nDr. Meenakshi Sundaram has been notified.`);
-  switchRole("doctor");
+  alert(`✓ Screening ${currentScreeningResult.screening_uid} successfully dispatched to the District Tele-Ophthalmology Triage Queue!\nReviewing specialist Dr. Meenakshi Sundaram has been notified.`);
+  switchNurseSubTab("history");
 }
 
 function setViewerMode(mode) {
   const overlayWrap = document.getElementById("overlay-view-wrapper");
   const sideWrap = document.getElementById("side-by-side-wrapper");
-  const opacityControl = document.getElementById("opacity-control-group");
-
   const btnGrad = document.getElementById("mode-btn-gradcam");
   const btnSide = document.getElementById("mode-btn-side");
-  const btnClahe = document.getElementById("mode-btn-clahe");
-
-  btnGrad.className = "px-2.5 py-1 rounded-md text-slate-700 hover:bg-slate-200";
-  btnSide.className = "px-2.5 py-1 rounded-md text-slate-700 hover:bg-slate-200";
-  btnClahe.className = "px-2.5 py-1 rounded-md text-slate-700 hover:bg-slate-200";
 
   if (mode === "gradcam") {
     btnGrad.className = "px-2.5 py-1 rounded-md bg-sky-600 text-white font-bold";
+    btnSide.className = "px-2.5 py-1 rounded-md text-slate-700 hover:bg-slate-200";
     overlayWrap.classList.remove("hidden");
     sideWrap.classList.add("hidden");
-    opacityControl.classList.remove("hidden");
-    if (currentScreeningResult) {
-      document.getElementById("img-display-base").src = currentScreeningResult.images.raw_url;
-      document.getElementById("img-display-overlay").src = currentScreeningResult.images.gradcam_url;
-      document.getElementById("img-display-overlay").classList.remove("hidden");
-    }
-  } else if (mode === "side") {
+  } else {
     btnSide.className = "px-2.5 py-1 rounded-md bg-sky-600 text-white font-bold";
+    btnGrad.className = "px-2.5 py-1 rounded-md text-slate-700 hover:bg-slate-200";
     overlayWrap.classList.add("hidden");
     sideWrap.classList.remove("hidden");
     sideWrap.classList.add("grid");
-    opacityControl.classList.add("hidden");
-  } else if (mode === "clahe") {
-    btnClahe.className = "px-2.5 py-1 rounded-md bg-sky-600 text-white font-bold";
-    overlayWrap.classList.remove("hidden");
-    sideWrap.classList.add("hidden");
-    opacityControl.classList.add("hidden");
-    if (currentScreeningResult) {
-      document.getElementById("img-display-base").src = currentScreeningResult.images.preprocessed_url;
-      document.getElementById("img-display-overlay").classList.add("hidden");
-    }
   }
-}
-
-function adjustHeatmapAlpha(val) {
-  const overlay = document.getElementById("img-display-overlay");
-  const label = document.getElementById("opacity-label");
-  if (overlay) overlay.style.opacity = val / 100;
-  if (label) label.textContent = `${val}%`;
 }
 
 
 // =========================================================================
-// 2. DOCTOR SPECIALIST (OPHTHALMOLOGIST) PORTAL LOGIC
+// 2. DOCTOR SPECIALIST PORTAL (QUEUE, LOUPE, CALIPER, NOTIFICATION DISPATCH)
 // =========================================================================
 
 async function loadDoctorQueue() {
@@ -530,11 +855,8 @@ async function loadDoctorQueue() {
     doctorQueue = data.queue || [];
     renderDoctorQueue(doctorQueue);
 
-    // Update doctor badges
-    const badge = document.getElementById("nav-doc-badge");
     const queueBadge = document.getElementById("doctor-queue-count-badge");
     const pendingCount = data.total_pending || 0;
-    if (badge) badge.textContent = pendingCount;
     if (queueBadge) queueBadge.textContent = `${pendingCount} Pending Review`;
   } catch (err) {
     console.error("Error loading doctor queue:", err);
@@ -591,7 +913,6 @@ async function openDoctorReview(screeningId) {
     const scr = data.screening;
     const pat = data.patient;
 
-    // Header metadata
     document.getElementById("doc-patient-name").textContent = pat ? pat.full_name : "Patient";
     document.getElementById("doc-patient-uid").textContent = pat ? pat.patient_uid : scr.screening_uid;
     
@@ -602,14 +923,12 @@ async function openDoctorReview(screeningId) {
 
     document.getElementById("doc-grade-pill").textContent = `${scr.grade_name} (${scr.eye})`;
 
-    // Image for Loupe & Caliper
     const imgEl = document.getElementById("doc-fundus-img");
     imgEl.src = scr.raw_image_url;
     imgEl.onload = () => {
       initCaliperCanvas();
     };
 
-    // Pre-populate existing review if already certified
     if (scr.doctor_clinical_action) {
       document.getElementById("doc-action-select").value = scr.doctor_clinical_action;
     }
@@ -618,6 +937,8 @@ async function openDoctorReview(screeningId) {
     }
     if (scr.doctor_signed_by) {
       document.getElementById("doc-signature-name").value = scr.doctor_signed_by;
+    } else if (currentUser && currentUser.full_name) {
+      document.getElementById("doc-signature-name").value = `${currentUser.full_name} - Reg: ${currentUser.license_or_id || 'TN-MC-49210'}`;
     }
 
     resetCaliper();
@@ -627,7 +948,7 @@ async function openDoctorReview(screeningId) {
   }
 }
 
-// Sub-pixel Digital Loupe (4x Zoom)
+// 4x Sub-Pixel Loupe
 function initDoctorLoupe() {
   const img = document.getElementById("doc-fundus-img");
   const lens = document.getElementById("loupe-lens");
@@ -670,12 +991,10 @@ function initDoctorLoupe() {
   });
 }
 
-// Micrometer Caliper Tool
 function initCaliperCanvas() {
   const img = document.getElementById("doc-fundus-img");
   const canvas = document.getElementById("doc-caliper-canvas");
   if (!img || !canvas) return;
-
   canvas.width = img.clientWidth;
   canvas.height = img.clientHeight;
 }
@@ -720,8 +1039,6 @@ function handleCaliperClick(e) {
   caliperPoints.push({ x, y });
 
   const ctx = canvas.getContext("2d");
-
-  // Draw Point
   ctx.fillStyle = "#6366f1";
   ctx.beginPath();
   ctx.arc(x, y, 4, 0, Math.PI * 2);
@@ -731,13 +1048,9 @@ function handleCaliperClick(e) {
     const p1 = caliperPoints[0];
     const p2 = caliperPoints[1];
 
-    // Distance in screen pixels
     const pxDist = Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
-
-    // Optical Caliper Scale: 45° fundus camera standard gives ~10.4 μm per pixel at 512px
     const umDist = Math.round(pxDist * 10.4);
 
-    // Draw connecting ruler line with caliper end-ticks
     ctx.strokeStyle = "#4f46e5";
     ctx.lineWidth = 2;
     ctx.setLineDash([4, 2]);
@@ -747,14 +1060,12 @@ function handleCaliperClick(e) {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    // Tick marks
     ctx.fillStyle = "#4f46e5";
     ctx.beginPath();
     ctx.arc(p1.x, p1.y, 5, 0, Math.PI * 2);
     ctx.arc(p2.x, p2.y, 5, 0, Math.PI * 2);
     ctx.fill();
 
-    // Measurement Callout
     ctx.font = "bold 12px monospace";
     ctx.fillStyle = "#ffffff";
     ctx.fillRect((p1.x + p2.x) / 2 - 25, (p1.y + p2.y) / 2 - 16, 54, 18);
@@ -762,11 +1073,11 @@ function handleCaliperClick(e) {
     ctx.fillText(`${umDist}μm`, (p1.x + p2.x) / 2 - 20, (p1.y + p2.y) / 2 - 3);
 
     document.getElementById("caliper-distance-um").textContent = `${umDist} μm (${Math.round(pxDist)} px)`;
-    caliperPoints = []; // Reset for next measurement
+    caliperPoints = [];
   }
 }
 
-// Web Speech Voice-to-Text Clinical Dictation
+// Voice Dictation
 function initVoiceRecognition() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
@@ -788,10 +1099,7 @@ function initVoiceRecognition() {
       }
     };
 
-    speechRecognizer.onerror = (err) => {
-      console.warn("Speech recognition error:", err.error);
-      stopVoiceDictation();
-    };
+    speechRecognizer.onerror = () => stopVoiceDictation();
   }
 }
 
@@ -800,12 +1108,8 @@ function toggleVoiceDictation() {
     alert("Speech-to-Text is supported in Chrome/Edge. You may also type clinical notes manually.");
     return;
   }
-
-  if (isDictating) {
-    stopVoiceDictation();
-  } else {
-    startVoiceDictation();
-  }
+  if (isDictating) stopVoiceDictation();
+  else startVoiceDictation();
 }
 
 function startVoiceDictation() {
@@ -820,15 +1124,13 @@ function startVoiceDictation() {
 }
 
 function stopVoiceDictation() {
-  if (speechRecognizer && isDictating) {
-    speechRecognizer.stop();
-  }
+  if (speechRecognizer && isDictating) speechRecognizer.stop();
   isDictating = false;
   document.getElementById("btn-speech-dictate").className = "px-3 py-1 rounded-lg bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 font-bold text-xs flex items-center space-x-1.5 transition-all";
-  document.getElementById("dictate-status-text").textContent = "Voice Dictate (Speech-to-Text)";
+  document.getElementById("dictate-status-text").textContent = "Voice Dictate";
 }
 
-// Doctor Digital Sign-off Submission
+// Doctor Digital Certification with Automated WhatsApp & Email Dispatch
 async function submitDoctorCertification() {
   if (!activeReviewScreening) return;
   const scrId = activeReviewScreening.screening.id;
@@ -852,9 +1154,17 @@ async function submitDoctorCertification() {
         hospital_compliance_status: "Certified & Appointment Scheduled"
       })
     });
+
     if (!res.ok) throw new Error("Certification failed");
     const result = await res.json();
-    alert(`✓ Screening Certified Successfully!\nSigned By: ${result.doctor_signed_by}\nAction: ${actionVal}\nDigital Timestamp: ${result.doctor_signed_at}`);
+
+    const notif = result.notifications;
+    let notifMsg = "";
+    if (notif) {
+      notifMsg = `\n\n📲 Automated Patient Alerts Dispatched:\n• WhatsApp Alert: ${notif.whatsapp.status} to ${notif.whatsapp.recipient_phone}\n• Email Alert: ${notif.email.status} to ${notif.email.recipient_email}`;
+    }
+
+    alert(`✓ Screening Certified Successfully!\nSigned By: ${result.doctor_signed_by}\nAction: ${actionVal}${notifMsg}`);
     loadDoctorQueue();
   } catch (err) {
     alert("Notice: " + err.message);
@@ -863,41 +1173,46 @@ async function submitDoctorCertification() {
 
 
 // =========================================================================
-// 3. PATIENT / CITIZEN HEALTH PORTAL LOGIC
+// 3. PRIVATE PATIENT / CITIZEN HEALTH PORTAL
 // =========================================================================
 
-function populatePatientPortalSelector() {
-  const select = document.getElementById("patient-portal-selector");
-  if (!select) return;
-  select.innerHTML = '<option value="">-- Choose Patient Account --</option>';
-  patientsList.forEach(p => {
-    const opt = document.createElement("option");
-    opt.value = p.id;
-    opt.textContent = `${p.full_name} (${p.patient_uid})`;
-    select.appendChild(opt);
-  });
+function renderPatientPortalData() {
+  if (!currentPatient) return;
 
-  if (patientsList.length > 0) {
-    select.value = patientsList[0].id;
-    onPatientPortalSelected();
-  }
-}
+  document.getElementById("patient-display-name").textContent = currentPatient.full_name;
+  document.getElementById("patient-display-uid").textContent = currentPatient.patient_uid;
+  document.getElementById("patient-display-village").textContent = 
+    `Village: ${currentPatient.village} | Diabetes: ${currentPatient.diabetes_years} Years | Mobile: ${currentPatient.phone || 'N/A'}`;
 
-async function onPatientPortalSelected() {
-  const select = document.getElementById("patient-portal-selector");
-  const pId = parseInt(select.value);
-  if (!pId) return;
+  // Most recent screening
+  const latestScreening = currentPatientScreenings.length > 0 ? currentPatientScreenings[0] : null;
 
-  const patient = patientsList.find(p => p.id === pId);
-  if (!patient) return;
+  if (latestScreening) {
+    // Doctor consultation verdict banner
+    const verdictDocName = document.getElementById("pat-verdict-doc-name");
+    const verdictTime = document.getElementById("pat-verdict-timestamp");
+    const verdictAction = document.getElementById("pat-verdict-action");
+    const verdictRx = document.getElementById("pat-verdict-rx");
+    const btnPdf = document.getElementById("pat-btn-download-pdf");
 
-  try {
-    const res = await fetch(`/api/patients/${pId}`);
-    const data = await res.json();
-    currentPatientScreenings = data.screenings || [];
+    if (latestScreening.doctor_review_status && latestScreening.doctor_review_status.includes("Certified")) {
+      verdictDocName.textContent = latestScreening.doctor_signed_by || "Reviewing District Ophthalmologist";
+      verdictTime.textContent = `Certified on ${latestScreening.doctor_signed_at || 'Recent'}`;
+      verdictAction.textContent = latestScreening.doctor_clinical_action || "Specialist Examination Completed";
+      verdictRx.textContent = latestScreening.doctor_prescription || "Follow routine diabetic retina eye care.";
+    } else {
+      verdictDocName.textContent = "Screening Stored - Under Specialist Review";
+      verdictTime.textContent = "Pending Doctor Certification";
+      verdictAction.textContent = "Awaiting tele-ophthalmology sign-off from District Hospital";
+      verdictRx.textContent = "The specialist doctor will review your fundus photo and dispatch your prescription shortly.";
+    }
 
-    // Update Dual-Eye Status
-    const odRecord = currentPatientScreenings.find(s => s.eye === "OD") || currentPatientScreenings[0];
+    if (btnPdf && latestScreening.report_pdf_url) {
+      btnPdf.href = latestScreening.report_pdf_url;
+    }
+
+    // Dual-Eye Status
+    const odRecord = currentPatientScreenings.find(s => s.eye === "OD") || latestScreening;
     const osRecord = currentPatientScreenings.find(s => s.eye === "OS");
 
     if (odRecord) {
@@ -910,14 +1225,9 @@ async function onPatientPortalSelected() {
         badge.className = "inline-block px-2 py-0.5 rounded-full text-[9px] font-bold bg-emerald-100 text-emerald-800";
         badge.textContent = "Healthy / Normal";
       }
-
-      // Update Progression Gauge
       const risk = odRecord.progression_risk_percent || 52;
       document.getElementById("pat-progression-val").textContent = `${risk}%`;
       document.getElementById("pat-progression-bar").style.width = `${risk}%`;
-
-      // Update PDF Link
-      document.getElementById("pat-pdf-link").href = `/api/reports/${odRecord.id}/pdf`;
     }
 
     if (osRecord) {
@@ -926,68 +1236,39 @@ async function onPatientPortalSelected() {
       badge.textContent = osRecord.is_referable ? "Referral Advised" : "Normal";
     }
 
-    // Update Nearest Hospital Card
-    document.getElementById("pat-hosp-name").textContent = "Aravind Eye Hospital";
-    document.getElementById("pat-hosp-city").textContent = "1, Anna Nagar, Madurai, Tamil Nadu";
-    document.getElementById("pat-hosp-dist").textContent = "~14.2 km";
-    document.getElementById("pat-hosp-maps-link").href = "https://maps.google.com/?q=Aravind+Eye+Hospital+Madurai";
-
-    // Set default Tamil spoken advice
-    playVoiceScript("tamil", false);
-  } catch (err) {
-    console.error("Error loading patient portal record:", err);
+    // Set initial voice text in Tamil
+    playPatientVoiceScript("tamil", false);
   }
 }
 
-// Regional Voice Audio Playback (Tamil, Hindi, English)
-async function playVoiceScript(lang, speakAloud = true) {
-  const scrId = currentPatientScreenings.length > 0 ? currentPatientScreenings[0].id : 1;
-  const pName = activePatient ? activePatient.full_name : "பெருமாள் நாடார்";
+// Regional Audio Playback for Patient
+function playPatientVoiceScript(lang, speakAloud = true) {
+  const pName = currentPatient ? currentPatient.full_name : "நோயாளி";
+  const scr = currentPatientScreenings.length > 0 ? currentPatientScreenings[0] : null;
+  const gradeName = scr ? scr.grade_name : "Diabetic Retinopathy";
+  const docAction = scr && scr.doctor_clinical_action ? scr.doctor_clinical_action : "மருத்துவர் ஆலோசனை";
 
   const scripts = {
-    tamil: `வணக்கம் ${pName}. உங்கள் வலது கண் பரிசோதனை முடிவு: மிதமான சர்க்கரை நோய் பாதிப்பு உள்ளது. கண் பார்வை குறையாமல் பாதுகாக்க, 2 முதல் 4 வாரங்களுக்குள் அரசு அல்லது மாவட்ட கண் மருத்துவமனைக்கு செல்லவும். லேசர் சிகிச்சை மூலம் பார்வையைப் பாதுகாக்கலாம்.`,
-    hindi: `नमस्ते ${pName}। आपकी आंख की जांच में मध्यम डायबिटिक रेटिनोपैथी पाई गई है। दृष्टि की सुरक्षा के लिए 2 से 4 सप्ताह के भीतर जिला नेत्र अस्पताल में विशेषज्ञ डॉक्टर से परामर्श लें।`,
-    english: `Hello ${pName}. Moderate diabetic retinopathy was detected during your retinal scan. Dr. Meenakshi recommends scheduling a specialist check-up at the District Eye Hospital within 2 to 4 weeks.`
+    tamil: `வணக்கம் ${pName}. உங்கள் கண் பரிசோதனை முடிவு: ${gradeName}. மருத்துவர் பரிந்துரை: ${docAction}. பார்வை பாதுகாப்பிற்கு அரசு அல்லது மாவட்ட கண் மருத்துவமனைக்கு செல்லவும்.`,
+    hindi: `नमस्ते ${pName}। आपकी आंख की जांच का परिणाम: ${gradeName}। डॉक्टर का निर्देश: ${docAction}। दृष्टि की सुरक्षा के लिए जिला अस्पताल से संपर्क करें।`,
+    english: `Hello ${pName}. Your retinal screening diagnosis is ${gradeName}. The specialist recommends: ${docAction}. Please visit the district eye hospital for consultation.`
   };
 
   const text = scripts[lang] || scripts.tamil;
   const titleEl = document.getElementById("voice-lang-active-title");
   const textEl = document.getElementById("voice-spoken-text");
-  
+
   if (titleEl) titleEl.textContent = `Spoken Guidance (${lang.toUpperCase()}):`;
   if (textEl) textEl.textContent = `"${text}"`;
 
   if (speakAloud && "speechSynthesis" in window) {
-    window.speechSynthesis.cancel(); // Stop prior speech
+    window.speechSynthesis.cancel();
     const utterance = new SpeechSynthesisUtterance(text);
     if (lang === "tamil") utterance.lang = "ta-IN";
     else if (lang === "hindi") utterance.lang = "hi-IN";
     else utterance.lang = "en-IN";
     utterance.rate = 0.95;
     window.speechSynthesis.speak(utterance);
-  }
-}
-
-// Simulated WhatsApp Alert
-async function triggerSimulatedWhatsApp() {
-  const scrId = currentPatientScreenings.length > 0 ? currentPatientScreenings[0].id : 1;
-  const phone = activePatient ? activePatient.phone : "+91 98421 73829";
-
-  try {
-    const res = await fetch("/api/notification/whatsapp", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        screening_id: scrId,
-        phone_number: phone,
-        preferred_language: "tamil"
-      })
-    });
-    const data = await res.json();
-    document.getElementById("whatsapp-bubble-content").textContent = data.message;
-    alert(`✓ WhatsApp Notification Dispatched to ${phone}!\nVerified Delivery Webhook Confirmed.`);
-  } catch (err) {
-    alert("WhatsApp notice: " + err.message);
   }
 }
 
@@ -1011,7 +1292,6 @@ async function loadAdminMetrics() {
     document.getElementById("dho-stat-certified").textContent = m.doctor_reviewed_count || 0;
     document.getElementById("dho-stat-incentives").textContent = `₹${(asha.total_incentives_disbursed_inr || 24000).toLocaleString()}`;
 
-    // Render ASHA Tracker Table
     const tbody = document.getElementById("asha-tracker-tbody");
     if (tbody && asha.workers) {
       tbody.innerHTML = "";
@@ -1042,7 +1322,6 @@ async function loadAdminMetrics() {
   }
 }
 
-// MathWorks Simulink Digital Twin Resource Simulator
 function updateSimSlider(type, val) {
   if (type === "pop") {
     document.getElementById("val-pop").textContent = `${parseInt(val).toLocaleString()}`;
@@ -1055,10 +1334,10 @@ function updateSimSlider(type, val) {
 }
 
 async function runSimulation() {
-  const pop = parseInt(document.getElementById("sim-pop-slider").value);
-  const phc = parseInt(document.getElementById("sim-phc-slider").value);
-  const bw = parseFloat(document.getElementById("sim-bandwidth-select").value);
-  const doc = parseInt(document.getElementById("sim-doc-slider").value);
+  const pop = parseInt(document.getElementById("sim-pop-slider")?.value || 100000);
+  const phc = parseInt(document.getElementById("sim-phc-slider")?.value || 50);
+  const bw = parseFloat(document.getElementById("sim-bandwidth-select")?.value || 2.0);
+  const doc = parseInt(document.getElementById("sim-doc-slider")?.value || 5);
 
   try {
     const res = await fetch("/api/simulation/run", {
@@ -1114,9 +1393,7 @@ function initSimChart() {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: {
-        legend: { display: false }
-      },
+      plugins: { legend: { display: false } },
       scales: {
         y: {
           beginAtZero: true,

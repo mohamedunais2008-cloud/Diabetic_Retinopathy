@@ -9,6 +9,24 @@ from sqlalchemy.orm import relationship
 from .connection import Base
 
 
+class User(Base):
+    """
+    Healthcare Stakeholder User Accounts
+    Roles: 'nurse', 'doctor', 'admin', 'patient'
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, index=True)
+    username = Column(String(80), unique=True, index=True, nullable=False)
+    email = Column(String(120), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(255), nullable=False)
+    role = Column(String(30), nullable=False) # nurse, doctor, admin, patient
+    full_name = Column(String(150), nullable=False)
+    license_or_id = Column(String(80), nullable=True) # e.g. Reg. No, ASHA ID
+    organization = Column(String(150), nullable=True) # e.g. PHC Kallandiri, Aravind Eye Hosp
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class Clinic(Base):
     __tablename__ = "clinics"
 
@@ -36,8 +54,9 @@ class Patient(Base):
     full_name = Column(String(120), nullable=False)
     age = Column(Integer, nullable=False)
     gender = Column(String(20), nullable=False) # Male, Female, Other
-    phone = Column(String(20), nullable=True)
-    village = Column(String(100), nullable=False)
+    phone = Column(String(20), nullable=True, index=True)
+    email = Column(String(120), nullable=True)
+    village = Column(String(100), nullable=False) # Manually entered by nurse
     district = Column(String(100), nullable=False)
     
     # Clinical history
@@ -103,8 +122,10 @@ class ScreeningRecord(Base):
     doctor_signed_at = Column(DateTime, nullable=True)
     is_dispatched_to_doctor = Column(Boolean, default=True)
     
-    # Patient & Follow-up Compliance
+    # Patient & Follow-up Compliance & Automated Notifications
     whatsapp_status = Column(String(100), nullable=True)
+    email_status = Column(String(100), nullable=True)
+    notification_dispatched_at = Column(DateTime, nullable=True)
     progression_risk_percent = Column(Float, default=15.0)
     hospital_compliance_status = Column(String(50), default="Pending Arrival") # Pending Arrival, Checked In, Laser Completed
     
