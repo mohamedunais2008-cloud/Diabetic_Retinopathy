@@ -1,0 +1,21 @@
+# Core Backend & API
+fastapi>=0.110.0
+uvicorn[standard]>=0.28.0
+pydantic>=2.6.0
+sqlalchemy>=2.0.28
+python-multipart>=0.0.9
+
+# Data Processing & Math
+numpy>=1.26.0
+pillow>=10.2.0
+matplotlib>=3.8.0
+
+# PDF Report Generation
+reportlab>=4.1.0
+
+# HTTP & Utilities
+requests>=2.31.0
+
+# Computer Vision & ML integration
+# Note: For ML teammate: torch, torchvision, or onnxruntime can be installed as needed
+# pip install onnxruntime
